@@ -1,0 +1,28 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+scipy = "*"
+matplotlib = "*"
+scikit-image = "*"
+opencv-contrib-python = "*"
+"h5py" = "*"
+imgaug = "*"
+ipython = {version = "*", extras = ["all"]}
+Pillow = "*"
+Cython = "*"
+Keras = "*"
+pycocotools = "*"
+tensorflow-gpu = "==1.10"
+pandas = "*"
+pyquaternion = "*"
+"transforms3d" = "*"
+depth-aware-operations = {editable = true, path = "./../DepthAwareOperations"}
+
+[dev-packages]
+pytest = "*"
+
+[requires]
+python_version = "3.6"

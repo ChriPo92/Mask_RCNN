@@ -210,6 +210,12 @@ class Config(object):
     # Gradient norm clipping
     GRADIENT_CLIP_NORM = 5.0
 
+    # enable training of 6D Pose estimation
+    OUTPUT_6D_POSE = False
+
+    # use depth-aware operation
+    USE_DEPTH_AWARE_OPS = False
+
     def __init__(self):
         """Set values of computed attributes."""
         # Effective batch size
@@ -223,6 +229,11 @@ class Config(object):
             self.IMAGE_SHAPE = np.array([self.IMAGE_MAX_DIM, self.IMAGE_MAX_DIM,
                 self.IMAGE_CHANNEL_COUNT])
 
+        if self.USE_DEPTH_AWARE_OPS:
+            # depth is counted as a seperate channel
+            self.MEAN_PIXEL = np.append(self.MEAN_PIXEL, 0.0)
+            self.IMAGE_CHANNEL_COUNT = 4
+            # self.IMAGE_SHAPE[2] = self.IMAGE_SHAPE[2] - 1
         # Image meta data length
         # See compose_image_meta() for details
         self.IMAGE_META_SIZE = 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES
