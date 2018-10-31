@@ -90,15 +90,21 @@ class YCBVConfig(Config):
     # Adjust down if you use a smaller GPU.
     IMAGES_PER_GPU = 1
     # do not resize the images, as they are all the same size
-    IMAGE_RESIZE_MODE = "none"
+    # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
+    # are always zero then
+    IMAGE_RESIZE_MODE = "square"#"none"
+    IMAGE_MIN_DIM = 480
+    IMAGE_MAX_DIM = 640
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
-    TRAIN_ROIS_PER_IMAGE = 130
+    TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = True
+
+    RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
 
     # Image mean (RGB)
