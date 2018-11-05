@@ -29,11 +29,18 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
 
 import os
 import sys
+import math
 import numpy as np
 import cv2
 import imgaug
 import skimage.io
 import skimage.color
+import keras.layers as KL
+import depth_aware_operations.da_convolution as da_conv
+import depth_aware_operations.da_avg_pooling as da_avg_pool
+
+DCKL = da_conv.keras_layers
+DPKL = da_avg_pool.keras_layers
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../../")
@@ -69,46 +76,6 @@ def load_image_ids(path):
         for line in f:
             l.append(line[:-1])
     return l
-
-
-
-
-########################################################################################################################
-#                                                   Configurations                                                     #
-########################################################################################################################
-
-
-class YCBVConfig(Config):
-    """Configuration for training on MS COCO.
-    Derives from the base Config class and overrides values specific
-    to the COCO dataset.
-    """
-    # Give the configuration a recognizable name
-    NAME = "YCBV"
-
-    # We use a GPU with 12GB memory, which can fit two images.
-    # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 1
-    # do not resize the images, as they are all the same size
-    # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
-    # are always zero then
-    IMAGE_RESIZE_MODE = "square"#"none"
-    IMAGE_MIN_DIM = 480
-    IMAGE_MAX_DIM = 640
-    # Uncomment to train on 8 GPUs (default is 1)
-    # GPU_COUNT = 8
-
-    # Number of classes (including background)
-    NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
-
-    TRAIN_ROIS_PER_IMAGE = 100
-    USE_DEPTH_AWARE_OPS = True
-
-    RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
-    # IMAGE_CHANNEL_COUNT = 4
-
-    # Image mean (RGB)
-
 
 
 ########################################################################################################################
@@ -201,6 +168,97 @@ class YCBVDataset(utils.Dataset):
             depth = skimage.io.imread(self.image_info[image_id]['depth'])
             image = np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)
         return image
+
+
+########################################################################################################################
+#                                                      Backbone                                                        #
+########################################################################################################################
+
+def da_resnet_graph(self, input_image, stage5=False, train_bn=True, depth_image=None):
+    """Build a ResNet graph.
+        architecture: Can be resnet50 or resnet101
+        stage5: Boolean. If False, stage5 of the network is not created
+        train_bn: Boolean. Train or freeze Batch Norm layers
+    """
+    print(self)
+    print(input_image)
+    assert depth_image is not None
+    architecture = "resnet101"
+    # Stage 1
+    x = DCKL.DAConv2D(32, (12, 12), strides=(1, 1), padding="same", name='conv1a', depth_image=depth_image)(input_image)
+    x = KL.ZeroPadding2D((3, 3))(x)
+    d = KL.ZeroPadding2D((3, 3))(depth_image)
+    x = DCKL.DAConv2D(64, (7, 7), strides=(2, 2), name='conv1b', use_bias=True, depth_image=d)(x)
+    x = modellib.BatchNorm(name='bn_conv1')(x, training=train_bn)
+    d = KL.AveragePooling2D((7, 7), strides=(2, 2))(d)
+    x = KL.Activation('relu')(x)
+    # TODO: use DAAvgPooling here
+    C1 = x = DPKL.DAAveragePooling2D(d, pool_size=(3, 3), strides=(2, 2), padding="same")(x)
+    # Stage 2
+    x = modellib.conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn)
+    x = modellib.identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
+    C2 = x = modellib.identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
+    # Stage 3
+    x = modellib.conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
+    x = modellib.identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
+    x = modellib.identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
+    C3 = x = modellib.identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn)
+    # Stage 4
+    x = modellib.conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn)
+    block_count = {"resnet50": 5, "resnet101": 22}[architecture]
+    for i in range(block_count):
+        x = modellib.identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn)
+        # x = KL.Lambda(lambda y: tf.Print(y, [tf.shape(y)], message="This is the shape of x: "))(x)
+    C4 = x
+    # Stage 5
+    if stage5:
+        x = modellib.conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn)
+        x = modellib.identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn)
+        C5 = x = modellib.identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn)
+    else:
+        C5 = None
+    return [C1, C2, C3, C4, C5]
+
+
+########################################################################################################################
+#                                                   Configurations                                                     #
+########################################################################################################################
+
+
+class YCBVConfig(Config):
+    """Configuration for training on MS COCO.
+    Derives from the base Config class and overrides values specific
+    to the COCO dataset.
+    """
+    # Give the configuration a recognizable name
+    NAME = "YCBV"
+
+    # We use a GPU with 12GB memory, which can fit two images.
+    # Adjust down if you use a smaller GPU.
+    IMAGES_PER_GPU = 1
+    # do not resize the images, as they are all the same size
+    # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
+    # are always zero then
+    IMAGE_RESIZE_MODE = "square"#"none"
+    IMAGE_MIN_DIM = 480
+    IMAGE_MAX_DIM = 640
+    # Uncomment to train on 8 GPUs (default is 1)
+    # GPU_COUNT = 8
+
+    # Number of classes (including background)
+    NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
+
+    TRAIN_ROIS_PER_IMAGE = 100
+    USE_DEPTH_AWARE_OPS = True
+
+    RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
+    # IMAGE_CHANNEL_COUNT = 4
+    BACKBONE = da_resnet_graph
+    COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
+        [[int(math.ceil(image_shape[0] / stride)),
+          int(math.ceil(image_shape[1] / stride))]
+         for stride in config.BACKBONE_STRIDES])
+
 
 ########################################################################################################################
 #                                                       Training                                                       #

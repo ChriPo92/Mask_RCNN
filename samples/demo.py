@@ -33,7 +33,8 @@ from samples.coco import coco
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_0180.h5")
+# COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
 if not os.path.exists(COCO_MODEL_PATH):
     utils.download_trained_weights(COCO_MODEL_PATH)
@@ -41,34 +42,33 @@ if not os.path.exists(COCO_MODEL_PATH):
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "images")
 
-class InferenceConfig(coco.CocoConfig):
-    # Set batch size to 1 since we'll be running inference on
-    # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
-    GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
-    DETECTION_MIN_CONFIDENCE = 0.4
-    USE_DEPTH_AWARE_OPS = False
-
-config = InferenceConfig()
-config.display()
-
-# class InferenceConfig(YCBVConfig):
+# class InferenceConfig(coco.CocoConfig):
 #     # Set batch size to 1 since we'll be running inference on
 #     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
 #     GPU_COUNT = 1
 #     IMAGES_PER_GPU = 1
 #     DETECTION_MIN_CONFIDENCE = 0.4
-#     USE_DEPTH_AWARE_OPS = True
-#     # IMAGE_CHANNEL_COUNT = 3
-#
-#     # Image mean (RGB)
-#     # MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 0.0])
-#     # MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
-#     IMAGE_RESIZE_MODE = "none"
-#
-#
-# config = InferenceConfig()
-# config.display()
+#     USE_DEPTH_AWARE_OPS = False
+#     IMAGE_MIN_DIM = 480
+#     IMAGE_MAX_DIM = 640
+
+class InferenceConfig(YCBVConfig):
+    # Set batch size to 1 since we'll be running inference on
+    # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
+    GPU_COUNT = 1
+    IMAGES_PER_GPU = 1
+    DETECTION_MIN_CONFIDENCE = 0.4
+    USE_DEPTH_AWARE_OPS = True
+    # IMAGE_CHANNEL_COUNT = 3
+
+    # Image mean (RGB)
+    # MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 0.0])
+    # MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
+    IMAGE_RESIZE_MODE = "none"
+
+
+config = InferenceConfig()
+config.display()
 
 # Create model object in inference mode.
 model = modellib.MaskRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
@@ -112,7 +112,7 @@ def calculate_2d_hull_of_pointcloud(pc, rot, trans, camera_calibration_matrix):
 
 
 def load_YCB_meta_infos(id):
-    path = "/media/christoph/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
+    path = "/home/christoph/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
     meta = io.loadmat(path)
     int_matrix = meta["intrinsic_matrix"]
     classes = meta["cls_indexes"]
@@ -151,7 +151,7 @@ def get_orientation_line_points(pose, K, scale=0.05):
 
 
 def load_bbox(id):
-    path = "/media/christoph/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
+    path = "/home/christoph/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
     d = {}
     with open(path, "r") as f:
         for row in f:
@@ -162,7 +162,7 @@ def load_bbox(id):
 
 
 def load_classes_id_dict():
-    path = "/media/christoph/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
+    path = "/home/christoph/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
     d = {}
     with open(path, "r") as f:
         for i, val in enumerate(f):
@@ -170,8 +170,8 @@ def load_classes_id_dict():
     return d
 
 
-dpt_file = "/media/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
-img_file = "/media/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
+dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
+img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
 import skimage.io as skio
 
 # image = skio.imread(img_file)
@@ -181,7 +181,7 @@ depth = cv2.imread(dpt_file, -1)
 bboxs = load_bbox("0000/000527")
 intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos("0000/000527")
 objs = ["Ape", "Can", "Cat", "Driller", "Duck", "Eggbox", "Glue"]
-pc = linemod_point_cloud("/media/christoph/Hitachi/YCB_Video_Dataset/models/025_mug/points.xyz")
+pc = linemod_point_cloud("/home/christoph/Hitachi/YCB_Video_Dataset/models/025_mug/points.xyz")
 X = []
 for i in range(len(classes)):
     points = get_orientation_line_points(poses[:, :, i], intrinsic_matrix)
@@ -211,8 +211,8 @@ pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, mug_pose[:, :3], mug_pose[:, 3
 
 
 # Run detection
-# results = model.detect([np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)], verbose=1)
-results = model.detect([image], verbose=1)
+results = model.detect([np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)], verbose=1)
+# results = model.detect([image], verbose=1)
 
 # Visualize results
 r = results[0]
@@ -283,7 +283,7 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
             os.remove("model.pcd")
         # transform xyz pointcloud to pcl format
         sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
-        model_path = osp.join("/media/christoph/Hitachi/YCB_Video_Dataset/models", key)
+        model_path = osp.join("/home/christoph/Hitachi/YCB_Video_Dataset/models", key)
         if not osp.exists(osp.join(model_path, "model_downsampled.pcd")):
             sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
                    stdout=sp.DEVNULL, check=True)
@@ -291,17 +291,17 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
                     osp.join(model_path, "model_downsampled.pcd"), "-radius", "0.002"], stdout=sp.DEVNULL, check=True)
         # sp.run(["pcl_xyz2pcd", osp.join(model_path, "points.xyz"), "model.pcd"], stdout=sp.DEVNULL, check=True)
         copyfile(osp.join(model_path, "model_downsampled.pcd"), "model.pcd")
-        completed_process = sp.run(["pcl_icp", "-d", "1.0", "mask.pcd", "model.pcd"], stdout=sp.PIPE, check=True)
+        completed_process = sp.run(["pcl_icp", "-d", "1.0", "model.pcd", "mask.pcd"], stdout=sp.PIPE, check=True)
         str_arr = str(completed_process.stdout).split("\\n")[6:10]
-        # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"], check=True)
+        sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
         pose = np.array([np.array(row.split(), np.float32) for row in str_arr])
         # we have to add the previously subtracted mean
         # pose[:3, 3] += mean
         # it turns out that icp becomes more precise if it is done with 2 different scales for MaxCorrespondenceDistance
-        completed_process = sp.run(["pcl_icp", "mask.pcd", "-d", "0.01", "-r", "0.01", "-i", "100", "model.pcd"],
+        completed_process = sp.run(["pcl_icp", "-d", "0.01", "-r", "0.01", "-i", "100", "model.pcd", "mask.pcd"],
                                    stdout=sp.PIPE, check=True)
         str_arr = str(completed_process.stdout).split("\\n")[6:10]
-        # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"], check=True)
+        sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
         pose2 = np.array([np.array(row.split(), np.float32) for row in str_arr])
         # pose[:3, :3] = np.matmul(pose2[:3, :3], pose[:3, :3])
         # pose[:3, 3] += pose2[:3, 3]
@@ -321,7 +321,7 @@ def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, cl
         icp_pose = icp_poses[name]
         pose = gt_poses[:, :, i]
         if mode == "hull":
-            model_path = "/media/christoph/Hitachi/YCB_Video_Dataset/models"
+            model_path = "/home/christoph/Hitachi/YCB_Video_Dataset/models"
             pc = linemod_point_cloud(osp.join(model_path, name, "points.xyz"))
             pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, pose[:, :3], pose[:, 3], intrinsic_matrix)
             icp_pc_2d, icp_hull = calculate_2d_hull_of_pointcloud(pc, icp_pose[:3, :3], icp_pose[:3, 3],

@@ -196,7 +196,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     return x
 
 
-def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
+def resnet_graph(input_image, architecture, stage5=False, train_bn=True, depth_image=None):
     """Build a ResNet graph.
         architecture: Can be resnet50 or resnet101
         stage5: Boolean. If False, stage5 of the network is not created
@@ -1861,8 +1861,9 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 batch_images[b] = mold_image(image.astype(np.float32), config)
             else:
                 molded_images = mold_image(image.astype(np.float32), config)
-                batch_images[b] = molded_images[:, :, :3]
-                batch_depth_images[b] = np.expand_dims(molded_images[:, :, 3], axis=2)
+                mol_image, mol_depth = np.split(molded_images, [-1], axis=2)
+                batch_images[b] = mol_image
+                batch_depth_images[b] = mol_depth
             batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
             batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
@@ -1995,14 +1996,10 @@ class MaskRCNN():
         # Don't create the thead (stage 5), so we pick the 4th item in the list.
         if callable(config.BACKBONE):
             _, C2, C3, C4, C5 = config.BACKBONE(input_image, stage5=True,
-                                                train_bn=config.TRAIN_BN)
+                                                train_bn=config.TRAIN_BN, depth_image=input_depth)
         else:
-            if config.USE_DEPTH_AWARE_OPS:
-                _, C2, C3, C4, C5 = da_resnet_graph(input_image, config.BACKBONE, input_depth,
-                                                 stage5=True, train_bn=config.TRAIN_BN)
-            else:
-                _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE,
-                                                 stage5=True, train_bn=config.TRAIN_BN)
+            _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE,
+                                             stage5=True, train_bn=config.TRAIN_BN, depth_image=input_depth)
         # Top-down Layers
         # TODO: add assert to varify feature map sizes match what's in config
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c5p5')(C5)
