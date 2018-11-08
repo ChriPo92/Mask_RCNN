@@ -248,16 +248,16 @@ class YCBVConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
-    TRAIN_ROIS_PER_IMAGE = 100
+    # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = True
 
     RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
-    BACKBONE = da_resnet_graph
-    COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
-        [[int(math.ceil(image_shape[0] / stride)),
-          int(math.ceil(image_shape[1] / stride))]
-         for stride in config.BACKBONE_STRIDES])
+    # BACKBONE = da_resnet_graph
+    # COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
+    #     [[int(math.ceil(image_shape[0] / stride)),
+    #       int(math.ceil(image_shape[1] / stride))]
+    #      for stride in config.BACKBONE_STRIDES])
 
 
 ########################################################################################################################
@@ -332,6 +332,9 @@ if __name__ == '__main__':
     # Select weights file to load
     if args.model.lower() == "coco":
         model_path = COCO_MODEL_PATH
+        # Download weights file
+        if not os.path.exists(model_path):
+            utils.download_trained_weights(model_path)
     elif args.model.lower() == "last":
         # Find last trained weights
         model_path = model.find_last()

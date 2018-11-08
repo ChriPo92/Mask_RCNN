@@ -92,25 +92,29 @@ def compute_backbone_shapes(config, image_shape):
          for stride in config.BACKBONE_STRIDES])
 
 
-def convolution_layer(filters, kernel_size, depth_image=None, strides=(1, 1), padding='valid', data_format=None,
+def convolution_layer(input, filters, kernel_size, depth_image=None, strides=(1, 1), padding='valid', data_format=None,
                       dilation_rate=(1, 1), activation=None, use_bias=True, kernel_initializer='glorot_uniform',
                       bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None,
                       activity_regularizer=None, kernel_constraint=None, bias_constraint=None, **kwargs):
+    image, depth = None, None
     if depth_image is None:
-        return KL.Conv2D(filters, kernel_size, strides=strides, padding=padding,
+        image = KL.Conv2D(filters, kernel_size, strides=strides, padding=padding,
                           data_format=data_format, dilation_rate=dilation_rate, activation=activation,
                           use_bias=use_bias, kernel_initializer=kernel_initializer, bias_initializer=bias_initializer,
                           kernel_regularizer=kernel_regularizer, bias_regularizer=bias_regularizer,
                           activity_regularizer=activity_regularizer, kernel_constraint=kernel_constraint,
-                          bias_constraint=bias_constraint, **kwargs)
+                          bias_constraint=bias_constraint, **kwargs)(input)
+        return image, depth
+
     else:
-        print(kwargs)
-        return DCKL.DAConv2D(filters, kernel_size, depth_image=depth_image, strides=strides, padding=padding,
+        image, depth = DCKL.DAConv2D(filters, kernel_size, depth_image=depth_image, strides=strides, padding=padding,
                           data_format=data_format, dilation_rate=dilation_rate, activation=activation,
                           use_bias=use_bias, kernel_initializer=kernel_initializer, bias_initializer=bias_initializer,
                           kernel_regularizer=kernel_regularizer, bias_regularizer=bias_regularizer,
                           activity_regularizer=activity_regularizer, kernel_constraint=kernel_constraint,
-                          bias_constraint=bias_constraint, **kwargs)
+                          bias_constraint=bias_constraint, return_depth=True, **kwargs)(input)
+        return image, depth
+
 
 
 ############################################################
@@ -156,7 +160,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
 
 
 def conv_block(input_tensor, kernel_size, filters, stage, block,
-               strides=(2, 2), use_bias=True, train_bn=True):
+               strides=(2, 2), use_bias=True, train_bn=True, depth=None):
     """conv_block is the block that has a conv layer at shortcut
     # Arguments
         input_tensor: input tensor
@@ -166,6 +170,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
         block: 'a','b'..., current block label, used for generating layer names
         use_bias: Boolean. To use or not use a bias in conv layers.
         train_bn: Boolean. Train or freeze Batch Norm layers
+        depth: depth "image" of the current convolved tensor
     Note that from stage 3, the first conv layer at main path is with subsample=(2,2)
     And the shortcut should have subsample=(2,2) as well
     """
@@ -173,18 +178,18 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     conv_name_base = 'res' + str(stage) + block + '_branch'
     bn_name_base = 'bn' + str(stage) + block + '_branch'
 
-    x = KL.Conv2D(nb_filter1, (1, 1), strides=strides,
-                  name=conv_name_base + '2a', use_bias=use_bias)(input_tensor)
+    x, d = convolution_layer(input_tensor, nb_filter1, (1, 1), strides=strides, depth_image=depth,
+                  name=conv_name_base + '2a', use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2a')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x = KL.Conv2D(nb_filter2, (kernel_size, kernel_size), padding='same',
-                  name=conv_name_base + '2b', use_bias=use_bias)(x)
+    x, d = convolution_layer(x, nb_filter2, (kernel_size, kernel_size), depth_image=d, padding='same',
+                  name=conv_name_base + '2b', use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2b')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x = KL.Conv2D(nb_filter3, (1, 1), name=conv_name_base +
-                                           '2c', use_bias=use_bias)(x)
+    x, d = convolution_layer(x, nb_filter3, (1, 1), depth_image=d, name=conv_name_base +
+                                           '2c', use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2c')(x, training=train_bn)
 
     shortcut = KL.Conv2D(nb_filter3, (1, 1), strides=strides,
@@ -205,12 +210,16 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True, depth_i
     assert architecture in ["resnet50", "resnet101"]
     # Stage 1
     x = KL.ZeroPadding2D((3, 3))(input_image)
-    x = KL.Conv2D(64, (7, 7), strides=(2, 2), name='conv1', use_bias=True)(x)
+    if depth_image is not None:
+        d = KL.ZeroPadding2D((3, 3))(depth_image)
+    else:
+        d = None
+    x, d = convolution_layer(x, 64, (7, 7), strides=(2, 2), name='conv1', use_bias=True, depth_image=d)
     x = BatchNorm(name='bn_conv1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     C1 = x = KL.MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)
     # Stage 2
-    x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn)
+    x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn, depth=d)
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
     C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
     # Stage 3

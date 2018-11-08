@@ -29,11 +29,19 @@ from mrcnn import visualize
 sys.path.append(os.path.join(ROOT_DIR, "samples/coco/"))  # To find local version
 from samples.coco import coco
 
+# from keras.backend.tensorflow_backend import set_session
+# import tensorflow as tf
+# config = tf.ConfigProto()
+# config.gpu_options.per_process_gpu_memory_fraction = 0.2
+# set_session(tf.Session(config=config))
+
+
 # Directory to save logs and trained model
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_0180.h5")
+# COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd_custom_da_resnet_graph.h5")
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgb.h5")
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
 if not os.path.exists(COCO_MODEL_PATH):
@@ -51,6 +59,7 @@ IMAGE_DIR = os.path.join(ROOT_DIR, "images")
 #     USE_DEPTH_AWARE_OPS = False
 #     IMAGE_MIN_DIM = 480
 #     IMAGE_MAX_DIM = 640
+#     NUM_CLASSES = 1 + 21
 
 class InferenceConfig(YCBVConfig):
     # Set batch size to 1 since we'll be running inference on
@@ -64,7 +73,9 @@ class InferenceConfig(YCBVConfig):
     # Image mean (RGB)
     # MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 0.0])
     # MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
-    IMAGE_RESIZE_MODE = "none"
+    IMAGE_MIN_DIM = 480
+    IMAGE_MAX_DIM = 640
+    IMAGE_RESIZE_MODE = "square"
 
 
 config = InferenceConfig()
@@ -207,8 +218,7 @@ pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, mug_pose[:, :3], mug_pose[:, 3
 # ax[1].imshow(depth)
 # ax[1].plot(center[:, 0], center[:, 1], "r+")
 
-
-
+classes_dict = load_classes_id_dict()
 
 # Run detection
 results = model.detect([np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)], verbose=1)
@@ -218,7 +228,7 @@ results = model.detect([np.concatenate((image, np.expand_dims(depth / 10000, 2))
 r = results[0]
 
 
-visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], class_names, r['scores'])
+visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], classes_dict, r['scores'])
 
 
 #
@@ -293,7 +303,7 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
         copyfile(osp.join(model_path, "model_downsampled.pcd"), "model.pcd")
         completed_process = sp.run(["pcl_icp", "-d", "1.0", "model.pcd", "mask.pcd"], stdout=sp.PIPE, check=True)
         str_arr = str(completed_process.stdout).split("\\n")[6:10]
-        sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
+        # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
         pose = np.array([np.array(row.split(), np.float32) for row in str_arr])
         # we have to add the previously subtracted mean
         # pose[:3, 3] += mean
@@ -301,7 +311,7 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
         completed_process = sp.run(["pcl_icp", "-d", "0.01", "-r", "0.01", "-i", "100", "model.pcd", "mask.pcd"],
                                    stdout=sp.PIPE, check=True)
         str_arr = str(completed_process.stdout).split("\\n")[6:10]
-        sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
+        # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
         pose2 = np.array([np.array(row.split(), np.float32) for row in str_arr])
         # pose[:3, :3] = np.matmul(pose2[:3, :3], pose[:3, :3])
         # pose[:3, 3] += pose2[:3, 3]
@@ -348,8 +358,7 @@ def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, cl
             ax[0].imshow(masked, "jet", alpha=0.7)
             ax[1].imshow(masked, "jet", alpha=0.7)
 
-
-icp_poses, item_corr = get_icp_RT(r, bboxs, intrinsic_matrix)
-classes_dict = load_classes_id_dict()
-visualize_icp_vs_ground_truth(image, depth, icp_poses, poses, classes, classes_dict, intrinsic_matrix, r["masks"],
-                              item_corr, show_mask=True)
+#
+# icp_poses, item_corr = get_icp_RT(r, bboxs, intrinsic_matrix)
+# visualize_icp_vs_ground_truth(image, depth, icp_poses, poses, classes, classes_dict, intrinsic_matrix, r["masks"],
+#                               item_corr, show_mask=True)
