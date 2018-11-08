@@ -107,6 +107,7 @@ def convolution_layer(input, filters, kernel_size, depth_image=None, strides=(1,
         return image, depth
 
     else:
+        # print("da_conv")
         image, depth = DCKL.DAConv2D(filters, kernel_size, depth_image=depth_image, strides=strides, padding=padding,
                           data_format=data_format, dilation_rate=dilation_rate, activation=activation,
                           use_bias=use_bias, kernel_initializer=kernel_initializer, bias_initializer=bias_initializer,
@@ -115,6 +116,15 @@ def convolution_layer(input, filters, kernel_size, depth_image=None, strides=(1,
                           bias_constraint=bias_constraint, return_depth=True, **kwargs)(input)
         return image, depth
 
+def pooling_layer(input_image, pool_size, strides, padding="same", depth_image=None):
+    image, depth = None, None
+    if depth_image is None:
+        image = KL.MaxPooling2D(pool_size, strides=strides, padding=padding)(input_image)
+        return image, depth
+    else:
+        image, depth = DPKL.DAAveragePooling2D(depth_image=depth_image, pool_size=pool_size,
+                                               strides=strides, padding=padding, return_depth=True)(input_image)
+        return image, depth
 
 
 ############################################################
@@ -217,7 +227,8 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True, depth_i
     x, d = convolution_layer(x, 64, (7, 7), strides=(2, 2), name='conv1', use_bias=True, depth_image=d)
     x = BatchNorm(name='bn_conv1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    C1 = x = KL.MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)
+    x, d = pooling_layer(x, (3, 3), strides=(2, 2), padding="same", depth_image=d)
+    C1 = x
     # Stage 2
     x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn, depth=d)
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
