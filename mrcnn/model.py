@@ -2445,9 +2445,12 @@ class MaskRCNN():
             "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
+            # only specific ResNet layers
+            "1-2": r"(res1.*)|(bn1.*)|(conv1)|(res2.*)|(bn2.*)"
         }
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
+        print(layers)
 
         # Data generators
         train_generator = data_generator(train_dataset, self.config, shuffle=True,
