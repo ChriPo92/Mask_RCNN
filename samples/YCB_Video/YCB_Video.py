@@ -235,7 +235,7 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 2
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
@@ -248,16 +248,17 @@ class YCBVConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
-    # TRAIN_ROIS_PER_IMAGE = 100
+    #TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = True
 
     RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
-    # BACKBONE = da_resnet_graph
-    # COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
-    #     [[int(math.ceil(image_shape[0] / stride)),
-    #       int(math.ceil(image_shape[1] / stride))]
-    #      for stride in config.BACKBONE_STRIDES])
+    #BACKBONE = da_resnet_graph
+    #COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
+    #    [[int(math.ceil(image_shape[0] / stride)),
+    #      int(math.ceil(image_shape[1] / stride))]
+    #     for stride in config.BACKBONE_STRIDES])
+
 
 
 ########################################################################################################################
@@ -346,7 +347,14 @@ if __name__ == '__main__':
 
     # Load weights
     print("Loading weights ", model_path)
-    model.load_weights(model_path, by_name=True)
+    if args.model.lower() == "coco":
+        # Exclude the last layers because they require a matching
+        # number of classes
+        model.load_weights(model_path, by_name=True, exclude=[
+            "mrcnn_class_logits", "mrcnn_bbox_fc",
+            "mrcnn_bbox", "mrcnn_mask"])
+    else:
+        model.load_weights(model_path, by_name=True)
 
     # Train or evaluate
     if args.command == "train":
