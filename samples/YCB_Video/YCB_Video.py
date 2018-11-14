@@ -276,7 +276,7 @@ if __name__ == '__main__':
             raise argparse.ArgumentTypeError('Boolean value expected.')
 
     import argparse
-    default_weights = "logs/ycbv20181019T1806/mask_rcnn_ycbv_0020.h5"
+    default_weights = "last"
     # Parse command line arguments
     parser = argparse.ArgumentParser(
         description='Train Mask R-CNN on YCB Video Dataset.')
@@ -379,35 +379,32 @@ if __name__ == '__main__':
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         print("Training network heads")
-        if args.depth_aware:
-            layers = "heads_c"
-        else:
-            layers = "heads"
+        layers = "1-2"
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
-                    epochs=40,
+                    learning_rate=config.LEARNING_RATE/5.,
+                    epochs=230,
                     layers=layers,
                     augmentation=augmentation)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        if args.depth_aware:
-            layers = "4+"
-        else:
-            layers = '4+'
-        print("Fine tune Resnet stage 4 and up")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
-                    epochs=100,
-                    layers=layers,
-                    augmentation=augmentation)
+        #if args.depth_aware:
+        #    layers = "4+"
+        #else:
+        #    layers = '4+'
+        #print("Fine tune Resnet stage 4 and up")
+        #model.train(dataset_train, dataset_val,
+        #            learning_rate=config.LEARNING_RATE,
+        #            epochs=100,
+        #            layers=layers,
+        #            augmentation=augmentation)
 
         # Training - Stage 3
         # Fine tune all layers
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 10,
-                    epochs=180,
+                    epochs=280,
                     layers='all',
                     augmentation=augmentation)
 
