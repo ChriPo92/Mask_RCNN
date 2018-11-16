@@ -135,7 +135,7 @@ def pooling_layer(input_image, pool_size, strides, padding="same", depth_image=N
 # https://github.com/fchollet/deep-learning-models/blob/master/resnet50.py
 
 def identity_block(input_tensor, kernel_size, filters, stage, block,
-                   use_bias=True, train_bn=True):
+                   use_bias=True, train_bn=True, depth=None):
     """The identity_block is the block that has no conv layer at shortcut
     # Arguments
         input_tensor: input tensor
@@ -150,23 +150,24 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
     conv_name_base = 'res' + str(stage) + block + '_branch'
     bn_name_base = 'bn' + str(stage) + block + '_branch'
 
-    x = KL.Conv2D(nb_filter1, (1, 1), name=conv_name_base + '2a',
-                  use_bias=use_bias)(input_tensor)
+    x, d = convolution_layer(input_tensor, nb_filter1, (1, 1), depth_image=depth,
+                          name=conv_name_base + '2a', use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2a')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x = KL.Conv2D(nb_filter2, (kernel_size, kernel_size), padding='same',
-                  name=conv_name_base + '2b', use_bias=use_bias)(x)
+    x, d = convolution_layer(x, nb_filter2, (kernel_size, kernel_size), depth_image=d,
+                          padding='same', name=conv_name_base + '2b', use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2b')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x = KL.Conv2D(nb_filter3, (1, 1), name=conv_name_base + '2c',
-                  use_bias=use_bias)(x)
+    x, d = convolution_layer(x, nb_filter3, (1, 1), depth_image=d, name=conv_name_base + '2c',
+                             use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2c')(x, training=train_bn)
 
     x = KL.Add()([x, input_tensor])
+    # d = KL.Add()([d, depth])
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
-    return x
+    return x, d
 
 
 def conv_block(input_tensor, kernel_size, filters, stage, block,
@@ -202,13 +203,15 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
                                            '2c', use_bias=use_bias)
     x = BatchNorm(name=bn_name_base + '2c')(x, training=train_bn)
 
-    shortcut = KL.Conv2D(nb_filter3, (1, 1), strides=strides,
-                         name=conv_name_base + '1', use_bias=use_bias)(input_tensor)
+    shortcut, s_d = convolution_layer(input_tensor, nb_filter3, (1, 1), depth_image=depth, strides=strides,
+                         name=conv_name_base + '1', use_bias=use_bias)
     shortcut = BatchNorm(name=bn_name_base + '1')(shortcut, training=train_bn)
 
     x = KL.Add()([x, shortcut])
+    # # TODO: does it make sense to add these?
+    # d = KL.Add()([d, s_d])
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
-    return x
+    return x, s_d
 
 
 def resnet_graph(input_image, architecture, stage5=False, train_bn=True, depth_image=None):
@@ -230,26 +233,29 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True, depth_i
     x, d = pooling_layer(x, (3, 3), strides=(2, 2), padding="same", depth_image=d)
     C1 = x
     # Stage 2
-    x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn, depth=d)
-    x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
-    C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
+    x, d = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn, depth=d)
+    x, d = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn, depth=d)
+    x, d = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn, depth=d)
+    C2 = x
     # Stage 3
-    x = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
-    x = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
-    x = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
-    C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn)
+    x, d = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn, depth=d)
+    x, d = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn, depth=d)
+    x, d = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn, depth=d)
+    x, d = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn, depth=d)
+    C3 = x
     # Stage 4
-    x = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn)
+    x, d = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn, depth=d)
     block_count = {"resnet50": 5, "resnet101": 22}[architecture]
     for i in range(block_count):
-        x = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn)
+        x, d = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn, depth=d)
         # x = KL.Lambda(lambda y: tf.Print(y, [tf.shape(y)], message="This is the shape of x: "))(x)
     C4 = x
     # Stage 5
     if stage5:
-        x = conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn)
-        x = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn)
-        C5 = x = identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn)
+        x, d = conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn, depth=d)
+        x, d = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn, depth=d)
+        x, d = identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn, depth=d)
+        C5 = x
     else:
         C5 = None
     return [C1, C2, C3, C4, C5]
@@ -1095,6 +1101,10 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
                            name="mrcnn_mask")(x)
     return x
+
+# def build_fpn_sekelton_graph(rois, feature_maps, image_meta,
+#                          pool_size, num_classes, train_bn=True):
+#
 
 
 ############################################################
@@ -2042,6 +2052,11 @@ class MaskRCNN():
         P6 = KL.MaxPooling2D(pool_size=(1, 1), strides=2, name="fpn_p6")(P5)
 
         # Note that P6 is used in RPN, but not in the classifier heads.
+        #
+        # The problem here is, that everything is calculated based on these feature maps, but these feature maps
+        # are calculated mostly independent of depth (exept for the layers that use DA ops) and therefore contain only
+        # minimal information about the depth
+        # TODO: encode more (representative) depth/geometric information into the feature maps smhw
         rpn_feature_maps = [P2, P3, P4, P5, P6]
         mrcnn_feature_maps = [P2, P3, P4, P5]
 
@@ -2450,7 +2465,6 @@ class MaskRCNN():
         }
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
-        print(layers)
 
         # Data generators
         train_generator = data_generator(train_dataset, self.config, shuffle=True,

@@ -20,6 +20,7 @@ pandas = "*"
 pyquaternion = "*"
 "transforms3d" = "*"
 depth-aware-operations = {editable = true, path = "./../DepthAwareOperations"}
+"open3d-python" = "*"
 
 [dev-packages]
 pytest = "*"

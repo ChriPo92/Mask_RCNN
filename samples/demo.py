@@ -41,7 +41,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd_custom_da_resnet_graph.h5")
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd.h5")
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgb.h5")
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
 if not os.path.exists(COCO_MODEL_PATH):
@@ -66,7 +66,7 @@ class InferenceConfig(YCBVConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    DETECTION_MIN_CONFIDENCE = 0.4
+    DETECTION_MIN_CONFIDENCE = 0.7
     USE_DEPTH_AWARE_OPS = True
     # IMAGE_CHANNEL_COUNT = 3
 
@@ -177,7 +177,7 @@ def load_classes_id_dict():
     d = {}
     with open(path, "r") as f:
         for i, val in enumerate(f):
-            d[i] = val[:-1]
+            d[i + 1] = val[:-1]
     return d
 
 

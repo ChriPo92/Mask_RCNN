@@ -242,6 +242,9 @@ class YCBVConfig(Config):
     IMAGE_RESIZE_MODE = "square"#"none"
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
+
+    # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
+    RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
 
@@ -251,7 +254,7 @@ class YCBVConfig(Config):
     # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = True
 
-    RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
+    # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
     # BACKBONE = da_resnet_graph
     # COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
@@ -366,15 +369,13 @@ if __name__ == '__main__':
         # Image Augmentation
         # Right/Left flip 50% of the time
         # TODO: if image is flipped, the 6d Pose changes --> make amends
+        # TODO: check if image augmentation works for rgbd images as well, then create more sophisticated augmentation
         augmentation = imgaug.augmenters.Fliplr(0.5)
         # augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         print("Training network heads")
-        if args.depth_aware:
-            layers = "heads_c"
-        else:
-            layers = "heads"
+        layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=40,
