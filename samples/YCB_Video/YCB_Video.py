@@ -251,7 +251,7 @@ class YCBVConfig(Config):
     # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = True
 
-    RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
+    RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
     # IMAGE_CHANNEL_COUNT = 4
     # BACKBONE = da_resnet_graph
     # COMPUTE_BACKBONE_SHAPE = lambda config, image_shape : np.array(
@@ -346,7 +346,14 @@ if __name__ == '__main__':
 
     # Load weights
     print("Loading weights ", model_path)
-    model.load_weights(model_path, by_name=True)
+    if args.model.lower() == "coco":
+        # Exclude the last layers because they require a matching
+        # number of classes
+        model.load_weights(model_path, by_name=True, exclude=[
+            "mrcnn_class_logits", "mrcnn_bbox_fc",
+            "mrcnn_bbox", "mrcnn_mask"])
+    else:
+        model.load_weights(model_path, by_name=True)
 
     # Train or evaluate
     if args.command == "train":
@@ -371,10 +378,7 @@ if __name__ == '__main__':
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         print("Training network heads")
-        if args.depth_aware:
-            layers = "heads_c"
-        else:
-            layers = "heads"
+        layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=40,

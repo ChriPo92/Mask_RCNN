@@ -66,7 +66,7 @@ class InferenceConfig(YCBVConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    DETECTION_MIN_CONFIDENCE = 0.4
+    DETECTION_MIN_CONFIDENCE = 0.6
     USE_DEPTH_AWARE_OPS = True
     # IMAGE_CHANNEL_COUNT = 3
 
@@ -123,7 +123,7 @@ def calculate_2d_hull_of_pointcloud(pc, rot, trans, camera_calibration_matrix):
 
 
 def load_YCB_meta_infos(id):
-    path = "/home/christoph/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
+    path = "/media/pohl/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
     meta = io.loadmat(path)
     int_matrix = meta["intrinsic_matrix"]
     classes = meta["cls_indexes"]
@@ -162,7 +162,7 @@ def get_orientation_line_points(pose, K, scale=0.05):
 
 
 def load_bbox(id):
-    path = "/home/christoph/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
+    path = "/media/pohl/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
     d = {}
     with open(path, "r") as f:
         for row in f:
@@ -173,16 +173,16 @@ def load_bbox(id):
 
 
 def load_classes_id_dict():
-    path = "/home/christoph/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
+    path = "/media/pohl/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
     d = {}
     with open(path, "r") as f:
         for i, val in enumerate(f):
-            d[i] = val[:-1]
+            d[i+1] = val[:-1]
     return d
 
 
-dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
-img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
+dpt_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
+img_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
 import skimage.io as skio
 
 # image = skio.imread(img_file)
@@ -192,7 +192,7 @@ depth = cv2.imread(dpt_file, -1)
 bboxs = load_bbox("0000/000527")
 intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos("0000/000527")
 objs = ["Ape", "Can", "Cat", "Driller", "Duck", "Eggbox", "Glue"]
-pc = linemod_point_cloud("/home/christoph/Hitachi/YCB_Video_Dataset/models/025_mug/points.xyz")
+pc = linemod_point_cloud("/media/pohl/Hitachi/YCB_Video_Dataset/models/025_mug/points.xyz")
 X = []
 for i in range(len(classes)):
     points = get_orientation_line_points(poses[:, :, i], intrinsic_matrix)
@@ -293,7 +293,7 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
             os.remove("model.pcd")
         # transform xyz pointcloud to pcl format
         sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
-        model_path = osp.join("/home/christoph/Hitachi/YCB_Video_Dataset/models", key)
+        model_path = osp.join("/media/pohl/Hitachi/YCB_Video_Dataset/models", key)
         if not osp.exists(osp.join(model_path, "model_downsampled.pcd")):
             sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
                    stdout=sp.DEVNULL, check=True)
@@ -331,7 +331,7 @@ def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, cl
         icp_pose = icp_poses[name]
         pose = gt_poses[:, :, i]
         if mode == "hull":
-            model_path = "/home/christoph/Hitachi/YCB_Video_Dataset/models"
+            model_path = "/media/pohl/Hitachi/YCB_Video_Dataset/models"
             pc = linemod_point_cloud(osp.join(model_path, name, "points.xyz"))
             pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, pose[:, :3], pose[:, 3], intrinsic_matrix)
             icp_pc_2d, icp_hull = calculate_2d_hull_of_pointcloud(pc, icp_pose[:3, :3], icp_pose[:3, 3],

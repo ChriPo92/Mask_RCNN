@@ -23,6 +23,7 @@ depth-aware-operations = {editable = true, path = "./../DepthAwareOperations"}
 
 [dev-packages]
 pytest = "*"
+ipython = "*"
 
 [requires]
 python_version = "3.6"
