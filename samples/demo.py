@@ -4,9 +4,12 @@ import sys
 import numpy as np
 import scipy.io as io
 import subprocess as sp
+import open3d as o3d
 from pyquaternion import Quaternion
 from mpl_toolkits.mplot3d import Axes3D
 from samples.YCB_Video.YCB_Video import YCBVConfig
+from samples.YCB_Video.open3d_test import draw_registration_result, preprocess_point_cloud,\
+    execute_global_registration, refine_registration
 import matplotlib
 import matplotlib.pyplot as plt
 import cv2
@@ -177,7 +180,7 @@ def load_classes_id_dict():
     d = {}
     with open(path, "r") as f:
         for i, val in enumerate(f):
-            d[i+1] = val[:-1]
+            d[i +1] = val[:-1]
     return d
 
 
@@ -318,6 +321,84 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
         poses[key] = np.matmul(pose2, pose)
     return poses, item_correspondences
 
+def get_ransac_RT(results, bboxes, intrinsic_matrix, voxel_size=0.005):
+    rois = results["rois"]
+    item_correspondences = {}
+    poses = {}
+    # find the corresponding mask detected by Mask RCNN for the object
+    for key, value in bboxes.items():
+        item_correspondences[key] = np.argmin(np.sum(np.abs(rois - value), axis=1))
+    for key, value in item_correspondences.items():
+        # extract y and x values of the mask
+        row, col = np.where(results["masks"][:, :, value])
+        # create array [x, y]
+        pos = np.concatenate((col.reshape(-1, 1), row.reshape(-1, 1)), axis=1)
+        # transform to homogenous coordinates
+        hom_pos = cv2.convertPointsToHomogeneous(pos).reshape(-1, 3).transpose()
+        # go from image coordinates to relative (to z) camera coordinates
+        cam_pos = np.matmul(np.linalg.inv(intrinsic_matrix), hom_pos).transpose()
+        # get absolute camera coordinates
+        xyz = np.multiply(cam_pos, depth[results["masks"][:, :, value]].reshape(-1, 1) / 10000)
+        # approximately calculate the center of the of masked points by calculating the mean
+        # mean = np.mean(xyz, axis=0)
+        # discard values with depth = 0
+        xyz = xyz[np.abs(xyz[:, 0]) > 0.000001]
+        # filter out some outliers in z
+        # TODO: use outlier filtering from o3d
+        xyz = xyz[np.abs(xyz[:, 2] - np.median(xyz[:, 2])) < np.std(xyz[:, 2])]
+        # if osp.exists("mask.xyz"):
+        #     os.remove("mask.xyz")
+        # with open("mask.xyz", "w") as f:
+        #     for row in xyz:
+        #         # f.write("%.5f %.5f %.5f\n"%(row[0] - mean[0], row[1] - mean[1], row[2] - mean[2]))
+        #         f.write("%.5f %.5f %.5f\n" % (row[0], row[1], row[2]))
+        # if osp.exists("mask.pcd"):
+        #     os.remove("mask.pcd")
+        # if osp.exists("model.pcd"):
+        #     os.remove("model.pcd")
+        # transform xyz pointcloud to pcl format
+        # sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
+
+        model_path = osp.join("/media/pohl/Hitachi/YCB_Video_Dataset/models", key)
+        if not osp.exists(osp.join(model_path, "model.pcd")):
+            sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
+                   stdout=sp.DEVNULL, check=True)
+        ycbv_pcd = o3d.read_point_cloud(osp.join(model_path, "model.pcd"))
+        mrcnn_pcd = o3d.PointCloud()
+#        o3d.estimate_normals(mrcnn_pcd)
+ #       o3d.estimate_normals(ycbv_pcd)
+        mrcnn_pcd.points = o3d.Vector3dVector(xyz)
+        ycbv_pcd_down, ycbv_fpfh = preprocess_point_cloud(ycbv_pcd, voxel_size)
+        mrcnn_pcd_down, mrcnn_fpfh = preprocess_point_cloud(mrcnn_pcd, voxel_size)
+        result_ransac = execute_global_registration(mrcnn_pcd_down, ycbv_pcd_down,
+                                mrcnn_fpfh, ycbv_fpfh, voxel_size)
+        draw_registration_result(mrcnn_pcd_down, ycbv_pcd_down,
+                                 result_ransac.transformation)
+        ycbv_pcd, _ = preprocess_point_cloud(ycbv_pcd, voxel_size / 3)
+        mrcnn_pcd, _ = preprocess_point_cloud(mrcnn_pcd, voxel_size / 3)
+        result_icp = refine_registration(mrcnn_pcd, ycbv_pcd, voxel_size, result_ransac)
+
+            # sp.run(["pcl_uniform_sampling", osp.join(model_path, "model.pcd"),
+            #         osp.join(model_path, "model_downsampled.pcd"), "-radius", "0.002"], stdout=sp.DEVNULL, check=True)
+        # sp.run(["pcl_xyz2pcd", osp.join(model_path, "points.xyz"), "model.pcd"], stdout=sp.DEVNULL, check=True)
+        # copyfile(osp.join(model_path, "model_downsampled.pcd"), "model.pcd")
+        # completed_process = sp.run(["pcl_icp", "-d", "1.0", "model.pcd", "mask.pcd"], stdout=sp.PIPE, check=True)
+        # str_arr = str(completed_process.stdout).split("\\n")[6:10]
+        # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
+        # pose = np.array([np.array(row.split(), np.float32) for row in str_arr])
+        # we have to add the previously subtracted mean
+        # pose[:3, 3] += mean
+        # it turns out that icp becomes more precise if it is done with 2 different scales for MaxCorrespondenceDistance
+        # completed_process = sp.run(["pcl_icp", "-d", "0.01", "-r", "0.01", "-i", "100", "model.pcd", "mask.pcd"],
+        #                            stdout=sp.PIPE, check=True)
+        # str_arr = str(completed_process.stdout).split("\\n")[6:10]
+        # # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
+        # pose2 = np.array([np.array(row.split(), np.float32) for row in str_arr])
+        # pose[:3, :3] = np.matmul(pose2[:3, :3], pose[:3, :3])
+        # pose[:3, 3] += pose2[:3, 3]
+        poses[key] = result_icp.transformation
+    return poses, item_correspondences
+
 
 def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, classes_dict, intrinsic_matrix,
                                   masks=None, item_corr=None, mode="vector", show_mask=False):
@@ -359,6 +440,6 @@ def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, cl
             ax[1].imshow(masked, "jet", alpha=0.7)
 
 #
-# icp_poses, item_corr = get_icp_RT(r, bboxs, intrinsic_matrix)
-# visualize_icp_vs_ground_truth(image, depth, icp_poses, poses, classes, classes_dict, intrinsic_matrix, r["masks"],
-#                               item_corr, show_mask=True)
+icp_poses, item_corr = get_ransac_RT(r, bboxs, intrinsic_matrix)
+visualize_icp_vs_ground_truth(image, depth, icp_poses, poses, classes, classes_dict, intrinsic_matrix, r["masks"],
+                              item_corr, show_mask=True)

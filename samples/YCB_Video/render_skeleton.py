@@ -4,12 +4,15 @@ import scipy.io as io
 import matplotlib.pyplot as plt
 import numpy as np
 import os.path as osp
+import open3d as o3d
 import cv2
 import os
 import subprocess as sp
 from shutil import copyfile
 
 from mpl_toolkits.mplot3d import Axes3D
+from samples.YCB_Video.open3d_test import draw_registration_result, preprocess_point_cloud, execute_global_registration,\
+    refine_registration
 # ROOT_DIR = os.path.abspath("../../")
 # sys.path.append(ROOT_DIR)
 
@@ -103,7 +106,7 @@ def render_skeleton_image(img_id, model_name):
 
     classes_dict = load_classes_id_dict()
     scgal_names = load_scgal_names_dict(ycb_scgal_names_file)
-    scgal_data_folder = "/common/homes/staff/pohl/Code/C++/simox-cgal/data/objects/ycb"
+    scgal_data_folder = "/common/homes/staff/pohl/Code/Cpp/simox-cgal/data/objects/ycb"
     scgal_model_folder = osp.join(scgal_data_folder, scgal_names[model_name])
     # the naming of these files is absolute bogus
     xml_file_name = scgal_names[model_name]
@@ -162,15 +165,85 @@ def render_skeleton_image(img_id, model_name):
     p_2d = p_2d.reshape(-1, 2)
     pc_2d, _ = cv2.projectPoints(pc_cam, np.array([0, 0, 0], np.float32), np.array([0, 0, 0], np.float32),
                                 intrinsic_matrix, 0)
-    p_2d = pc_2d.reshape(-1, 2)
+    pc_2d = pc_2d.reshape(-1, 2)
+    return p_2d, pc_2d
+
+def render_skeleton_image_ransac(img_id, model_name, voxel_size=0.005):
+    data_path = "/media/pohl/Hitachi/YCB_Video_Dataset/data/"
+    models_path = "/media/pohl/Hitachi/YCB_Video_Dataset/models"
+    ycb_scgal_names_file = osp.join(models_path, "cgal_skeletons.txt")
+    rgb_file = osp.join(data_path, img_id + "-color.png")
+    pc_model_file = osp.join(models_path, model_name, "model.pcd")
+    model_folder = osp.join(models_path, model_name)
+
+    classes_dict = load_classes_id_dict()
+    scgal_names = load_scgal_names_dict(ycb_scgal_names_file)
+    scgal_data_folder = "/common/homes/staff/pohl/Code/Cpp/simox-cgal/data/objects/ycb"
+    scgal_model_folder = osp.join(scgal_data_folder, scgal_names[model_name])
+    # the naming of these files is absolute bogus
+    xml_file_name = scgal_names[model_name]
+    if "-" in xml_file_name:
+        xml_file_name = xml_file_name.split("-")[1]
+    skeleton_file = osp.join(scgal_model_folder, "CGALSkeleton", "skeleton", "CGALMesh-" + xml_file_name + ".xml")
+    mesh_file = osp.join(scgal_model_folder, "CGALSkeleton", "mesh", "CGALSkeleton-" + xml_file_name + ".xml")
+    try:
+        skel_points = get_skeleton_points(skeleton_file).values / 1000
+        scgal_xyz = make_point_cloud_from_mesh_xml(mesh_file).values / 1000
+    except FileNotFoundError:
+        skeleton_file = skeleton_file[:-4] + "-poisson.xml"
+        mesh_file = mesh_file[:-4] + "-poisson.xml"
+        skel_points = get_skeleton_points(skeleton_file).values / 1000
+        scgal_xyz = make_point_cloud_from_mesh_xml(mesh_file).values / 1000
+    scgal_pc = o3d.PointCloud()
+    scgal_pc.points = o3d.Vector3dVector(scgal_xyz)
+    scgal_pcd, _ = preprocess_point_cloud(scgal_pc, voxel_size / 5)
+    # o3d.estimate_normals(scgal_pc, o3d.KDTreeSearchParamHybrid(
+    #     radius=voxel_size * 2, max_nn=30))
+
+    model_id = None
+    # image = cv2.imread(rgb_file, -1)
+    intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos(img_id)
+    for id, value in classes_dict.items():
+        if value == model_name:
+            model_id = np.where(classes == id)[0][0]
+    if not osp.exists(pc_model_file):
+        sp.run(["pcl_obj2pcd", osp.join(model_folder, "textured.obj"), osp.join(model_folder, "model.pcd")],
+               stdout=sp.DEVNULL, check=True)
+    ycbv_pc = o3d.read_point_cloud(pc_model_file)
+    ycbv_pcd, _ = preprocess_point_cloud(ycbv_pc, voxel_size / 5)
+    # o3d.estimate_normals(ycbv_pc, o3d.KDTreeSearchParamHybrid(
+    #     radius=voxel_size * 2, max_nn=30))
+    ycbv_pcd_down, ycbv_fpfh = preprocess_point_cloud(ycbv_pc, voxel_size)
+    scgal_pcd_down, scgal_fpfh = preprocess_point_cloud(scgal_pc, voxel_size)
+    result_ransac = execute_global_registration(scgal_pcd_down, ycbv_pcd_down,
+                                scgal_fpfh, ycbv_fpfh, voxel_size)
+    draw_registration_result(scgal_pcd_down, ycbv_pcd_down,
+                             result_ransac.transformation)
+    result_icp = refine_registration(scgal_pcd, ycbv_pcd, voxel_size, result_ransac)
+    # draw_registration_result(scgal_pc, ycbv_pc, result_icp.transformation)
+    # sp.run(["pcl_viewer", "model.pcd", "mask.pcd"])
+    scgal_to_ycb_pose = result_icp.transformation
+    p_hom = np.column_stack((skel_points, np.ones(skel_points.shape[0]))).transpose()
+    pc_hom = np.column_stack((scgal_xyz, np.ones(scgal_xyz.shape[0]))).transpose()
+    p_obj = np.matmul(scgal_to_ycb_pose, p_hom)
+    pc_obj = np.matmul(scgal_to_ycb_pose, pc_hom)
+    obj_to_camera_pose = poses[:, :, model_id]
+    p_cam = np.matmul(obj_to_camera_pose, p_obj).transpose()
+    pc_cam = np.matmul(obj_to_camera_pose, pc_obj).transpose()
+    p_2d, _ = cv2.projectPoints(p_cam, np.array([0, 0, 0], np.float32), np.array([0, 0, 0], np.float32),
+                                intrinsic_matrix, 0)
+    p_2d = p_2d.reshape(-1, 2)
+    pc_2d, _ = cv2.projectPoints(pc_cam, np.array([0, 0, 0], np.float32), np.array([0, 0, 0], np.float32),
+                                intrinsic_matrix, 0)
+    pc_2d = pc_2d.reshape(-1, 2)
     return p_2d, pc_2d
 
 if __name__ == "__main__":
-    skeleton_file = "/common/homes/staff/pohl/Code/C++/simox-cgal/data/objects/ycb/black_and_decker_lithium_drill_driver_unboxed/CGALSkeleton/skeleton/CGALMesh-black_and_decker_lithium_drill_driver_unboxed.xml"
+    skeleton_file = "/common/homes/staff/pohl/Code/Cpp/simox-cgal/data/objects/ycb/black_and_decker_lithium_drill_driver_unboxed/CGALSkeleton/skeleton/CGALMesh-black_and_decker_lithium_drill_driver_unboxed.xml"
     rgb_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0024/000001-color.png"
     dpt_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0024/000001-depth.png"
     pc_file = "/media/pohl/Hitachi/YCB_Video_Dataset/models/035_power_drill/points.xyz"
-    mesh_file = "/common/homes/staff/pohl/Code/C++/simox-cgal/data/objects/ycb/black_and_decker_lithium_drill_driver_unboxed/CGALSkeleton/mesh/CGALSkeleton-black_and_decker_lithium_drill_driver_unboxed.xml"
+    mesh_file = "/common/homes/staff/pohl/Code/Cpp/simox-cgal/data/objects/ycb/black_and_decker_lithium_drill_driver_unboxed/CGALSkeleton/mesh/CGALSkeleton-black_and_decker_lithium_drill_driver_unboxed.xml"
     model_path = osp.join("/media/pohl/Hitachi/YCB_Video_Dataset/models", "035_power_drill")
 
     points = get_skeleton_points(skeleton_file)
@@ -248,10 +321,10 @@ if __name__ == "__main__":
     fig = plt.figure()
     ax = fig.add_subplot("111")
     ax.imshow(image)
-    for id in classes:
-        print(id)
-        p_2d, pc_2d = render_skeleton_image("0024/000001", classes_dict[id[0]])
-        # ax.scatter(p_2d[:, 0], p_2d[:, 1])
-        ax.scatter(pc_2d[:, 0], pc_2d[:, 1])
+    # for id in classes:
+    #     print(id)
+    p_2d, pc_2d = render_skeleton_image_ransac("0024/000001", classes_dict[15])
+    ax.scatter(p_2d[:, 0], p_2d[:, 1])
+    ax.scatter(pc_2d[:, 0], pc_2d[:, 1])
 
 

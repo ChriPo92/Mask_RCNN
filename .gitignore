@@ -10,6 +10,7 @@ test/
 __pycache__/
 *.py[cod]
 *$py.class
+*.py~
 
 # Distribution / packaging
 .Python
@@ -59,7 +60,7 @@ venv/
 ENV/
 
 # pipenv
-*.lo
+*.lock
 
 # pointclouds
 *.pcd
