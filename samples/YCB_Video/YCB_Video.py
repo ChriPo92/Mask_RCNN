@@ -235,7 +235,7 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 2
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
@@ -314,6 +314,12 @@ if __name__ == '__main__':
     # Configurations
     if args.command == "train":
         config = YCBVConfig()
+        if args.depth_aware:
+            config.USE_DEPTH_AWARE_OPS = True
+            config.MEAN_PIXEL = np.append(config.MEAN_PIXEL, 0.0)
+            config.IMAGE_CHANNEL_COUNT = 4
+        else:
+            assert config.USE_DEPTH_AWARE_OPS == False
     else:
         class InferenceConfig(YCBVConfig):
             # Set batch size to 1 since we'll be running inference on
