@@ -21,6 +21,7 @@ pyquaternion = "*"
 "transforms3d" = "*"
 depth-aware-operations = {editable = true, path = "./../DepthAwareOperations"}
 "open3d" = {editable = true, path = "./../../Cpp/Open3D/build/lib/python_package"}
+tqdm = "*"
 
 [dev-packages]
 pytest = "*"

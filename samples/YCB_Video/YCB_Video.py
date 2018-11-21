@@ -29,15 +29,19 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
 
 import os
 import sys
+import time
 import math
 import numpy as np
 import cv2
 import imgaug
+import pandas as pd
 import skimage.io
 import skimage.color
 import keras.layers as KL
 import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
@@ -48,7 +52,7 @@ ROOT_DIR = os.path.abspath("../../")
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
-from mrcnn import model as modellib, utils
+from mrcnn import model as modellib, utils, visualize
 
 # Path to trained weights file
 COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
@@ -262,6 +266,176 @@ class YCBVConfig(Config):
     #       int(math.ceil(image_shape[1] / stride))]
     #      for stride in config.BACKBONE_STRIDES])
 
+########################################################################################################################
+#                                                   Evaluation                                                     #
+########################################################################################################################
+
+def compute_matches(gt_boxes, gt_class_ids, gt_masks,
+                    pred_boxes, pred_class_ids, pred_scores, pred_masks,
+                    iou_threshold=0.5, score_threshold=0.0):
+    """Finds matches between prediction and ground truth instances.
+
+    Returns:
+        gt_match: 1-D array. For each GT box it has the index of the matched
+                  predicted box.
+        pred_match: 1-D array. For each predicted box, it has the index of
+                    the matched ground truth box.
+        overlaps: [pred_boxes, gt_boxes] IoU overlaps.
+    """
+    # Trim zero padding
+    # TODO: cleaner to do zero unpadding upstream
+    gt_boxes = utils.trim_zeros(gt_boxes)
+    gt_masks = gt_masks[..., :gt_boxes.shape[0]]
+    pred_boxes = utils.trim_zeros(pred_boxes)
+    pred_scores = pred_scores[:pred_boxes.shape[0]]
+    # Sort predictions by score from high to low
+    indices = np.argsort(pred_scores)[::-1]
+    pred_boxes = pred_boxes[indices]
+    pred_class_ids = pred_class_ids[indices]
+    pred_scores = pred_scores[indices]
+    pred_masks = pred_masks[..., indices]
+
+    # Compute IoU overlaps [pred_masks, gt_masks]
+    overlaps = utils.compute_overlaps_masks(pred_masks, gt_masks)
+
+    # Loop through predictions and find matching ground truth boxes
+    match_count = 0
+    pred_match = -1 * np.ones([pred_boxes.shape[0]])
+    gt_match = -1 * np.ones([gt_boxes.shape[0]])
+    mask_f1 = -1 * np.ones([gt_boxes.shape[0]])
+    for i in range(len(pred_boxes)):
+        # Find best matching ground truth box
+        # 1. Sort matches by score
+        sorted_ixs = np.argsort(overlaps[i])[::-1]
+        # 2. Remove low scores
+        low_score_idx = np.where(overlaps[i, sorted_ixs] < score_threshold)[0]
+        if low_score_idx.size > 0:
+            sorted_ixs = sorted_ixs[:low_score_idx[0]]
+        # 3. Find the match
+        for j in sorted_ixs:
+            # If ground truth box is already matched, go to next one
+            if gt_match[j] > -1:
+                continue
+            # If we reach IoU smaller than the threshold, end the loop
+            iou = overlaps[i, j]
+            if iou < iou_threshold:
+                break
+            # Do we have a match?
+            if pred_class_ids[i] == gt_class_ids[j]:
+                mask_true_pos = np.sum(np.logical_and(pred_masks[:, :, i], gt_masks[:, :, j]))
+                mask_false_neg = np.sum(np.logical_and(np.logical_not(pred_masks[:, :, i]), gt_masks[:, :, j]))
+                mask_false_pos = np.sum(np.logical_and(pred_masks[:, :, i], np.logical_not(gt_masks[:, :, j])))
+                mask_recall = mask_true_pos / (mask_true_pos + mask_false_neg)
+                mask_precision = mask_true_pos / (mask_true_pos +  mask_false_pos)
+                mask_f1[i] = mask_precision * mask_recall / (mask_precision + mask_recall)
+                match_count += 1
+                gt_match[j] = i
+                pred_match[i] = j
+                break
+
+    return gt_match, pred_match, overlaps, mask_f1
+
+def compute_ap(gt_boxes, gt_class_ids, gt_masks,
+               pred_boxes, pred_class_ids, pred_scores, pred_masks,
+               iou_threshold=0.5):
+    """Compute Average Precision at a set IoU threshold (default 0.5).
+
+    Returns:
+    mAP: Mean Average Precision
+    precisions: List of precisions at different class score thresholds.
+    recalls: List of recall values at different class score thresholds.
+    overlaps: [pred_boxes, gt_boxes] IoU overlaps.
+    """
+    # Get matches and overlaps
+    gt_match, pred_match, overlaps, mask_f1 = compute_matches(
+        gt_boxes, gt_class_ids, gt_masks,
+        pred_boxes, pred_class_ids, pred_scores, pred_masks,
+        iou_threshold)
+
+    # Compute precision and recall at each prediction box step
+    precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
+    recalls = np.cumsum(pred_match > -1).astype(np.float32) / len(gt_match)
+
+    # Pad with start and end values to simplify the math
+    precisions = np.concatenate([[0], precisions, [0]])
+    recalls = np.concatenate([[0], recalls, [1]])
+
+    # Ensure precision values decrease but don't increase. This way, the
+    # precision value at each recall threshold is the maximum it can be
+    # for all following recall thresholds, as specified by the VOC paper.
+    for i in range(len(precisions) - 2, -1, -1):
+        precisions[i] = np.maximum(precisions[i], precisions[i + 1])
+
+    # Compute mean AP over recall range
+    # TODO: this is rather an F1 score than an mean average precision?
+    indices = np.where(recalls[:-1] != recalls[1:])[0] + 1
+    mAP = np.sum((recalls[indices] - recalls[indices - 1]) *
+                 precisions[indices])
+
+    return mAP, precisions, recalls, overlaps, mask_f1
+
+def evaluate_YCBV(model, dataset, config, eval_type="bbox", limit=0, image_ids=None, plot=False):
+    """Runs YCBV evaluation.
+        dataset: A Dataset object with valiadtion data
+        eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
+        limit: if not 0, it's the number of images to use for evaluation
+        """
+    # Pick COCO images from the dataset
+    image_ids = image_ids or dataset.image_ids
+    # classes_dict = load_classes_id_dict()
+
+    # Limit to a subset
+    if limit:
+        image_ids = image_ids[:limit]
+
+    t_prediction = {}
+    t_start = time.time()
+
+    results = []
+    APs, precisions, recalls, overlaps, mask_f1s = {}, {}, {}, {}, {}
+    for i, image_id in enumerate(tqdm(image_ids)):
+
+        # Load image
+        image = dataset.load_image(image_id)
+
+        # Run detection
+        t = time.time()
+        r = model.detect([image], verbose=0)[0]
+        t_prediction[image_id] = (time.time() - t)
+
+
+        # gt_image, gt_image_meta, gt_class_ids, gt_bbox, gt_mask = modellib.load_image_gt(dataset, config, image_id)
+        gt_image = dataset.load_image(image_id)
+        gt_mask, gt_class_ids = dataset.load_mask(image_id)
+        gt_bbox = utils.extract_bboxes(gt_mask)
+        AP, precision, recall, overlap, mask_f1 = \
+            compute_ap(gt_bbox, gt_class_ids, gt_mask,
+                             r['rois'], r['class_ids'], r['scores'], r['masks'])
+        if plot:
+            fig, ax = plt.subplots(1, 2)
+            visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], dataset.class_names, r['scores'], ax=ax[0])
+            visualize.display_instances(gt_image, gt_bbox, gt_mask, gt_class_ids, dataset.class_names,
+                                        ax=ax[1])
+            fig.tight_layout(pad=0)
+            fig.subplots_adjust(wspace=0)
+            plt.show()
+            visualize.plot_overlaps(gt_class_ids, r['class_ids'], r['scores'],
+                                    overlap, dataset.class_names, threshold=config.DETECTION_MIN_CONFIDENCE)
+        APs[image_id] = AP
+        precisions[image_id] = precision
+        recalls[image_id] = recall
+        overlaps[image_id] = overlap
+        mask_f1s[image_id] = np.mean(mask_f1[mask_f1 > -1])
+    result = pd.DataFrame(data={"mAPs": APs, "mF1s": mask_f1s, "recall": recalls, "precision": precisions,
+                                "overlap": overlaps, "times": t_prediction})
+    mAP = result["mAPs"].mean()
+    mF1 = result["mF1s"].mean()
+    print(f"mAP of the class prediction: {mAP}. mF1 of the predicted masks: {mF1}")
+    print("Prediction time: {}. Average {}/image".format(
+        result["times"].sum(), result["times"].mean()))
+    print("Total time: ", time.time() - t_start)
+    return result
+
 
 ########################################################################################################################
 #                                                       Training                                                       #
@@ -296,7 +470,7 @@ if __name__ == '__main__':
                         metavar="/path/to/logs/",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--limit', required=False,
-                        default=500,
+                        default=100,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
     parser.add_argument('--depth_aware', required=False, type=str2bool,
@@ -326,7 +500,8 @@ if __name__ == '__main__':
             # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
             GPU_COUNT = 1
             IMAGES_PER_GPU = 1
-            DETECTION_MIN_CONFIDENCE = 0
+            DETECTION_MIN_CONFIDENCE = 0.9
+            USE_DEPTH_AWARE_OPS = args.depth_aware
         config = InferenceConfig()
     config.display()
 
@@ -417,14 +592,16 @@ if __name__ == '__main__':
                     layers='all',
                     augmentation=augmentation)
 
-    # elif args.command == "evaluate":
-    #     # Validation dataset
-    #     dataset_val = CocoDataset()
-    #     val_type = "val" if args.year in '2017' else "minival"
-    #     coco = dataset_val.load_coco(args.dataset, val_type, year=args.year, return_coco=True, auto_download=args.download)
-    #     dataset_val.prepare()
-    #     print("Running COCO evaluation on {} images.".format(args.limit))
-    #     evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
+    elif args.command == "evaluate":
+        # Validation dataset
+        dataset_val = YCBVDataset()
+        val_type = "minival"
+        dataset_val.load_ycbv(args.dataset, val_type, use_rgbd=args.depth_aware)
+        dataset_val.prepare()
+        num = args.limit or len(dataset_val.image_ids)
+        print(f"Running YCBV evaluation on {num} images.")
+        result = evaluate_YCBV(model, dataset_val, config, "bbox", limit=int(args.limit), plot=False)
+        result.to_pickle(model_path[:-3] + "_eval.pkl")
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.command))

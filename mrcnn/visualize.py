@@ -355,6 +355,7 @@ def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
     plt.tight_layout()
     plt.xlabel("Ground Truth")
     plt.ylabel("Predictions")
+    plt.show()
 
 
 def draw_boxes(image, boxes=None, refined_boxes=None,
