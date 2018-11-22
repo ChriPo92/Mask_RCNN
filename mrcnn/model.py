@@ -1347,7 +1347,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         # test your augmentation on masks
         MASK_AUGMENTERS = ["Sequential", "SomeOf", "OneOf", "Sometimes",
                            "Fliplr", "Flipud", "CropAndPad",
-                           "Affine", "PiecewiseAffine"]
+                           "Affine", "PiecewiseAffine", "PerspectiveTransform"]
 
         def hook(images, augmenter, parents, default):
             """Determines which augmenters to apply to masks."""
@@ -1358,11 +1358,21 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         mask_shape = mask.shape
         # Make augmenters deterministic to apply similarly to images and masks
         det = augmentation.to_deterministic()
-        image = det.augment_image(image)
+        if config.USE_DEPTH_AWARE_OPS:
+            depth = image[:, :, 3]
+            img = image.copy()[:, :, :3].astype(np.uint8)
+        else:
+            img = image
+        img = det.augment_image(img)
         # Change mask to np.uint8 because imgaug doesn't support np.bool
         mask = det.augment_image(mask.astype(np.uint8),
                                  hooks=imgaug.HooksImages(activator=hook))
         # Verify that shapes didn't change
+        if config.USE_DEPTH_AWARE_OPS:
+            depth = det.augment_image((depth * 10000).astype(np.uint16), hooks=imgaug.HooksImages(activator=hook))
+            image = np.concatenate((img, np.expand_dims(depth / 10000, 2)), axis=2)
+        else:
+            image = img
         assert image.shape == image_shape, "Augmentation shouldn't change image size"
         assert mask.shape == mask_shape, "Augmentation shouldn't change mask size"
         # Change mask back to bool
