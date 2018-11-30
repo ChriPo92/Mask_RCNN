@@ -2461,7 +2461,8 @@ class MaskRCNN():
             # All layers
             "all": ".*",
             # only specific ResNet layers
-            "1-2": r"(res1.*)|(bn1.*)|(conv1)|(res2.*)|(bn2.*)"
+            "1-2": r"(res1.*)|(bn1.*)|(conv1)|(res2.*)|(bn2.*)",
+            "resnet": r"(res1.*)|(bn1.*)|(conv1)|(res2.*)|(bn2.*)|(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)"
         }
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
