@@ -59,8 +59,8 @@ def execute_global_registration(
             distance_threshold,
             o3d.TransformationEstimationPointToPoint(False), 4,
             [o3d.CorrespondenceCheckerBasedOnEdgeLength(0.95),
-            o3d.CorrespondenceCheckerBasedOnDistance(8 * distance_threshold)],
-            o3d.RANSACConvergenceCriteria(4000000, 500))
+            o3d.CorrespondenceCheckerBasedOnDistance(2 * distance_threshold)],
+            o3d.RANSACConvergenceCriteria(4000000, 5000))
     return result
 
 def execute_fast_global_registration(source_down, target_down,
@@ -71,7 +71,7 @@ def execute_fast_global_registration(source_down, target_down,
     result = o3d.registration_fast_based_on_feature_matching(
             source_down, target_down, source_fpfh, target_fpfh,
             o3d.FastGlobalRegistrationOption(
-            maximum_correspondence_distance = distance_threshold, iteration_number=128))
+            maximum_correspondence_distance = 3* distance_threshold, iteration_number=256))
     return result
 
 

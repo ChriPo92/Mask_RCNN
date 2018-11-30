@@ -37,9 +37,13 @@ import pandas as pd
 import skimage.io
 import skimage.color
 import keras.layers as KL
+import keras.backend as KB
 import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
 import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.python.client import timeline
+
 from tqdm import tqdm
 
 DCKL = da_conv.keras_layers
@@ -59,6 +63,8 @@ COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Directory to save logs and model checkpoints, if not provided
 # through the command line argument --logs
 DEFAULT_LOGS_DIR = os.path.join(ROOT_DIR, "logs")
+
+
 
 ########################################################################################################################
 #                                                       Utility                                                        #
@@ -86,13 +92,14 @@ def load_image_ids(path):
 ########################################################################################################################
 
 class YCBVDataset(utils.Dataset):
-    def load_ycbv(self, dataset_dir, subset, class_ids=None, use_synthetic=False, use_rgbd=False):
+    def load_ycbv(self, dataset_dir, subset, class_ids=None, use_annotation="label", use_rgbd=False):
         """Load a subset of the COCO dataset.
         dataset_dir: The root directory of the COCO dataset.
         subset: What to load (train, val, minival, valminusminival)
         class_ids: If provided, only loads images that have the given classes.
         use_synthetic: If True uses the synthetic data in the data_syn folder (exclusively?)
         """
+        assert use_annotation in ["label", "skeleton"]
         self.use_rgbd=use_rgbd
         image_sets = os.path.join(dataset_dir, "image_sets/")
         image_dir = os.path.join(dataset_dir, "data/")
@@ -120,7 +127,7 @@ class YCBVDataset(utils.Dataset):
                 path=os.path.join(image_dir, i + "-color.png"),
                 width=640,
                 height=480,
-                annotations=os.path.join(image_dir, i + "-label.png"),
+                annotations=os.path.join(image_dir, i + f"-{use_annotation}.png"),
                 depth=os.path.join(image_dir, i + "-depth.png"),
                 meta=os.path.join(image_dir, i + "-meta.mat"),
                 box=os.path.join(image_dir, i + "-box.txt"))
@@ -242,20 +249,23 @@ class YCBVConfig(Config):
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
-    IMAGE_RESIZE_MODE = "square"#"none"
+    IMAGE_RESIZE_MODE = "square"#"none" #
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
 
+    TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
+    RPN_ANCHOR_RATIOS = [0.5, 1, 2]
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
+    # STEPS_PER_EPOCH = 203
     # TRAIN_ROIS_PER_IMAGE = 100
-    USE_DEPTH_AWARE_OPS = False
+    USE_DEPTH_AWARE_OPS = True
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
@@ -569,8 +579,12 @@ if __name__ == '__main__':
                         help='Images to use for evaluation (default=500)')
     parser.add_argument('--depth_aware', required=False, type=str2bool,
                        default=False,
-                       metavar="<image count>",
+                       metavar="<use-depth-awareness>",
                        help='Train with depth-aware operations')
+    parser.add_argument('--debug', required=False,
+                        default=False,
+                        metavar="<debug>",
+                        help='Start a Debug-Session at port 7000')
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
@@ -578,6 +592,14 @@ if __name__ == '__main__':
     print("Logs: ", args.logs)
     print("Depth Awareness: ", args.depth_aware)
 
+    if args.debug:
+        from tensorflow.python import debug as tf_debug
+        sess = tf.Session()
+        if args.debug == "cli":
+            sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        else:
+            sess = tf_debug.TensorBoardDebugWrapperSession(sess, "i61nb003:7000")
+        KB.set_session(sess)
 
     # Configurations
     if args.command == "train":
@@ -656,35 +678,52 @@ if __name__ == '__main__':
         # augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
-        print("Training network heads")
+        print(f"Training network heads & profiling to {args.logs}")
         layers = "heads"
+        # builder = tf.profiler.ProfileOptionBuilder
+        # opts = builder(builder.time_and_memory()).order_by('micros').build()
+        # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=40,
+                    epochs=1,
                     layers=layers,
                     augmentation=augmentation)
+        tl = timeline.Timeline(model.run_metadata.step_stats)
+        ctf = tl.generate_chrome_trace_format()
+
+        with open('./timeline.json', 'w') as f:
+            f.write(ctf)
+
+        ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
+        opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
+                                    ).with_node_names(show_name_regexes=['.*']).build()
+        # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
+        prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        prof.add_step(1, model.run_metadata)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        if args.depth_aware:
-            layers = "4+"
-        else:
-            layers = '4+'
+        layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=100,
                     layers=layers,
                     augmentation=augmentation)
+        prof.add_step(2, model.run_metadata)
 
-        # Training - Stage 3
-        # Fine tune all layers
+
+        # # Training - Stage 3
+        # # Fine tune all layers
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 10,
-                    epochs=180,
-                    layers='all',
-                    augmentation=augmentation)
+                        learning_rate=config.LEARNING_RATE / 10,
+                        epochs=180,
+                        layers='all',
+                        augmentation=augmentation)
+        prof.add_step(3, model.run_metadata)
+        with open('./profile_rgbd', 'wb') as f:
+            f.write(prof.serialize_to_string())
 
     elif args.command == "evaluate":
         # Validation dataset
@@ -700,16 +739,17 @@ if __name__ == '__main__':
         dataset_train = YCBVDataset()
         dataset_train.load_ycbv(args.dataset, "train", use_rgbd=args.depth_aware)
         dataset_train.prepare()
-        # fig, ax = plt.subplots(1, 2)
-        for _ in range(10):
-            # ax[0].cla()
-            # ax[1].cla()
-            fig, ax = plt.subplots(1, 2)
-            # plt.close("all")
-            image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset_train, config, dataset_train.image_ids[0], augmentation=seq)
-            visualize.display_instances(image, bbox, mask, class_ids, dataset_train.class_names, ax=ax[0])
-            ax[1].imshow(image[:, :, 3])
-            plt.show()
+        fig, ax = plt.subplots(5, 2)
+        for j in range(5):
+            for i in range(2):
+                # ax[0].cla()
+                # ax[1].cla()
+                # fig, ax = plt.subplots(1, 2)
+                # plt.close("all")
+                image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset_train, config, dataset_train.image_ids[0], augmentation=seq)
+                visualize.display_instances(image, bbox, mask, class_ids, dataset_train.class_names, ax=ax[j, i])
+                # ax[1].imshow(image[:, :, 3])
+        plt.show()
 
     else:
         print("'{}' is not recognized. "

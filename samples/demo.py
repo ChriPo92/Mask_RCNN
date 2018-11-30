@@ -69,7 +69,7 @@ class InferenceConfig(YCBVConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    DETECTION_MIN_CONFIDENCE = 0.6
+    DETECTION_MIN_CONFIDENCE = 0.1
     USE_DEPTH_AWARE_OPS = False
     # IMAGE_CHANNEL_COUNT = 3
 
@@ -184,14 +184,17 @@ def load_classes_id_dict():
     return d
 
 
-dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
-img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
+# dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
+# img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
+dpt_file = "/home/christoph/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-58.799_depth.png"
+img_file = "/home/christoph/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-58.799_rgb.png"
 import skimage.io as skio
 
-# image = skio.imread(img_file)
-# depth = skio.imread(dpt_file)
-image = cv2.imread(img_file, -1)
-depth = cv2.imread(dpt_file, -1)
+image = skio.imread(img_file)
+depth = skio.imread(dpt_file)
+depth = (np.left_shift(depth[:, :, 1].astype(np.uint32), 8) + depth[:, :, 0]) / 1000.
+# image = cv2.imread(img_file, -1)
+# depth = cv2.imread(dpt_file, -1) / 10000
 bboxs = load_bbox("0000/000527")
 intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos("0000/000527")
 objs = ["Ape", "Can", "Cat", "Driller", "Duck", "Eggbox", "Glue"]
@@ -203,28 +206,28 @@ for i in range(len(classes)):
 mug_pose = poses[:, :, 1]
 pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, mug_pose[:, :3], mug_pose[:, 3], intrinsic_matrix)
 
-# fig, ax = plt.subplots(1, 2)
-# fig.set_size_inches(15, 30)
-# ax[0].imshow(image)
-# # ax[0].plot(center[:, 0], center[:, 1], "r+")
-# # for arr in X:
-# #     ax[0].plot([arr[0, 0], arr[1, 0]], [arr[0, 1], arr[1, 1]], "r-")
-# #     ax[0].plot([arr[0, 0], arr[2, 0]], [arr[0, 1], arr[2, 1]], "g-")
-# #     ax[0].plot([arr[0, 0], arr[3, 0]], [arr[0, 1], arr[3, 1]], "b-")
-# # from matplotlib.patches import Rectangle
-# # for key, val in bboxs.items():
-# #     rect = Rectangle(val[0], val[1][0]-val[0][0], val[1][1]-val[0][1], edgecolor="r", facecolor="none")
-# #     ax[0].add_patch(rect)
-# # # ax[0].plot(pc_2d[:, 0], pc_2d[:, 1])
-# # for simplex in hull.simplices:
-# #     ax[0].plot(pc_2d[simplex, 0], pc_2d[simplex, 1], 'k-')
-# ax[1].imshow(depth)
+fig, ax = plt.subplots(1, 2)
+fig.set_size_inches(15, 30)
+ax[0].imshow(image)
+# ax[0].plot(center[:, 0], center[:, 1], "r+")
+# for arr in X:
+#     ax[0].plot([arr[0, 0], arr[1, 0]], [arr[0, 1], arr[1, 1]], "r-")
+#     ax[0].plot([arr[0, 0], arr[2, 0]], [arr[0, 1], arr[2, 1]], "g-")
+#     ax[0].plot([arr[0, 0], arr[3, 0]], [arr[0, 1], arr[3, 1]], "b-")
+# from matplotlib.patches import Rectangle
+# for key, val in bboxs.items():
+#     rect = Rectangle(val[0], val[1][0]-val[0][0], val[1][1]-val[0][1], edgecolor="r", facecolor="none")
+#     ax[0].add_patch(rect)
+# # ax[0].plot(pc_2d[:, 0], pc_2d[:, 1])
+# for simplex in hull.simplices:
+#     ax[0].plot(pc_2d[simplex, 0], pc_2d[simplex, 1], 'k-')
+ax[1].imshow(depth)
 # ax[1].plot(center[:, 0], center[:, 1], "r+")
 
 classes_dict = load_classes_id_dict()
 
 # Run detection
-# results = model.detect([np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)], verbose=1)
+# results = model.detect([np.concatenate((image, np.expand_dims(depth, 2)), axis=2)], verbose=1)
 results = model.detect([image], verbose=1)
 
 # Visualize results
@@ -446,7 +449,7 @@ def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, cl
             ax[1].imshow(masked, "jet", alpha=0.7)
 
 #
-icp_poses, item_corr = get_ransac_RT(r, bboxs, intrinsic_matrix, depth=depth, image=image, voxel_size=0.002)
+# icp_poses, item_corr = get_ransac_RT(r, bboxs, intrinsic_matrix, depth=depth, image=image, voxel_size=0.002)
 # icp_poses, item_corr = get_icp_RT(r, bboxs, intrinsic_matrix)
 # visualize_icp_vs_ground_truth(image, depth, icp_poses, poses, classes, classes_dict, intrinsic_matrix, r["masks"],
 #                               item_corr, show_mask=True, mode="both")
