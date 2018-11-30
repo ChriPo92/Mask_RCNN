@@ -253,7 +253,7 @@ class YCBVConfig(Config):
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
 
-    TRAIN_BN = None
+    # TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
     RPN_ANCHOR_RATIOS = [0.5, 1, 2]
@@ -265,7 +265,7 @@ class YCBVConfig(Config):
 
     # STEPS_PER_EPOCH = 203
     # TRAIN_ROIS_PER_IMAGE = 100
-    USE_DEPTH_AWARE_OPS = True
+    USE_DEPTH_AWARE_OPS = False
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
@@ -585,12 +585,17 @@ if __name__ == '__main__':
                         default=False,
                         metavar="<debug>",
                         help='Start a Debug-Session at port 7000')
+    parser.add_argument('--continue_training', required=False, type=str2bool,
+                        default=False,
+                        metavar="<continue_training>",
+                        help='If true, continues training; otherwise start at epoch 0!')
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
     print("Dataset: ", args.dataset)
     print("Logs: ", args.logs)
     print("Depth Awareness: ", args.depth_aware)
+    print("Continue Training: ", args.continue_training)
 
     if args.debug:
         from tensorflow.python import debug as tf_debug
@@ -651,9 +656,9 @@ if __name__ == '__main__':
         # number of classes
         model.load_weights(model_path, by_name=True, exclude=[
             "mrcnn_class_logits", "mrcnn_bbox_fc",
-            "mrcnn_bbox", "mrcnn_mask"])
+            "mrcnn_bbox", "mrcnn_mask"], continue_training=args.continue_training)
     else:
-        model.load_weights(model_path, by_name=True)
+        model.load_weights(model_path, by_name=True, continue_training=args.continue_training)
 
     # Train or evaluate
     if args.command == "train":
@@ -678,14 +683,14 @@ if __name__ == '__main__':
         # augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
-        print(f"Training network heads & profiling to {args.logs}")
-        layers = "heads"
+        print("Training Resnet & profiling")
+        layers = "resnet"
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
-                    epochs=1,
+                    learning_rate=config.LEARNING_RATE * 10,
+                    epochs=40,
                     layers=layers,
                     augmentation=augmentation)
         tl = timeline.Timeline(model.run_metadata.step_stats)
@@ -694,12 +699,12 @@ if __name__ == '__main__':
         with open('./timeline.json', 'w') as f:
             f.write(ctf)
 
-        ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
-        opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
-                                    ).with_node_names(show_name_regexes=['.*']).build()
-        # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
-        prof = tf.profiler.Profiler(graph=KB.get_session().graph)
-        prof.add_step(1, model.run_metadata)
+        # ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
+        # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
+        #                             ).with_node_names(show_name_regexes=['.*']).build()
+        # # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
+        # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        # prof.add_step(1, model.run_metadata)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
@@ -710,7 +715,7 @@ if __name__ == '__main__':
                     epochs=100,
                     layers=layers,
                     augmentation=augmentation)
-        prof.add_step(2, model.run_metadata)
+        # prof.add_step(2, model.run_metadata)
 
 
         # # Training - Stage 3
@@ -718,12 +723,12 @@ if __name__ == '__main__':
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                         learning_rate=config.LEARNING_RATE / 10,
-                        epochs=180,
+                        epochs=200,
                         layers='all',
                         augmentation=augmentation)
-        prof.add_step(3, model.run_metadata)
-        with open('./profile_rgbd', 'wb') as f:
-            f.write(prof.serialize_to_string())
+        # prof.add_step(3, model.run_metadata)
+        # with open('./profile_rgbd', 'wb') as f:
+        #     f.write(prof.serialize_to_string())
 
     elif args.command == "evaluate":
         # Validation dataset
