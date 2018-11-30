@@ -50,7 +50,7 @@ def prepare_dataset(voxel_size):
 
 def execute_global_registration(
         source_down, target_down, source_fpfh, target_fpfh, voxel_size):
-    distance_threshold = voxel_size * 5
+    distance_threshold = voxel_size * 2
     # print(":: RANSAC registration on downsampled point clouds.")
     # print("   Since the downsampling voxel size is %.3f," % voxel_size)
     # print("   we use a liberal distance threshold %.3f." % distance_threshold)
@@ -58,10 +58,22 @@ def execute_global_registration(
             source_down, target_down, source_fpfh, target_fpfh,
             distance_threshold,
             o3d.TransformationEstimationPointToPoint(False), 4,
-            [o3d.CorrespondenceCheckerBasedOnEdgeLength(0.9),
-            o3d.CorrespondenceCheckerBasedOnDistance(distance_threshold)],
-            o3d.RANSACConvergenceCriteria(4000000, 500))
+            [o3d.CorrespondenceCheckerBasedOnEdgeLength(0.95),
+            o3d.CorrespondenceCheckerBasedOnDistance(2 * distance_threshold)],
+            o3d.RANSACConvergenceCriteria(4000000, 5000))
     return result
+
+def execute_fast_global_registration(source_down, target_down,
+        source_fpfh, target_fpfh, voxel_size):
+    distance_threshold = voxel_size * 2
+    print(":: Apply fast global registration with distance threshold %.3f" \
+            % distance_threshold)
+    result = o3d.registration_fast_based_on_feature_matching(
+            source_down, target_down, source_fpfh, target_fpfh,
+            o3d.FastGlobalRegistrationOption(
+            maximum_correspondence_distance = 3* distance_threshold, iteration_number=256))
+    return result
+
 
 def refine_registration(source, target, voxel_size, result_ransac):
     distance_threshold = voxel_size * 2
@@ -84,15 +96,15 @@ def refine_registration_color(source, target, voxel_size, result_ransac):
     return result
 
 if __name__ == '__main__':
-    base_dir = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0024"
+    base_dir = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0024"
     color_path = osp.join(base_dir, "000001-color.png")
     depth_path = osp.join(base_dir, "000001-depth.png")
-    scgal_path = "/common/homes/staff/pohl/Code/Cpp/simox-cgal/data/objects/ycb/black_and_decker_lithium_drill_driver_unboxed/black_and_decker_lithium_drill_driver_unboxed.ply"
-    ycbv_path = "/media/pohl/Hitachi/YCB_Video_Dataset/models/035_power_drill/textured.ply"
-    # color_raw = o3d.read_image(color_path)
-    # depth_raw = o3d.read_image(depth_path)
-    # rgbd_image = o3d.create_rgbd_image_from_color_and_depth(
-    #     color_raw, depth_raw, depth_scale=10000, convert_rgb_to_intensity=False)
+    scgal_path = "/home/christoph/Code/Cpp/simox-cgal/data/objects/ycb/black_and_decker_lithium_drill_driver_unboxed/black_and_decker_lithium_drill_driver_unboxed.ply"
+    ycbv_path = "/home/christoph/Hitachi/YCB_Video_Dataset/models/035_power_drill/textured.ply"
+    color_raw = o3d.read_image(color_path)
+    depth_raw = o3d.read_image(depth_path)
+    rgbd_image = o3d.create_rgbd_image_from_color_and_depth(
+        color_raw, depth_raw, depth_scale=10000, convert_rgb_to_intensity=False)
     # print(rgbd_image)
     # plt.subplot(1, 2, 1)
     # plt.title('Redwood grayscale image')
@@ -101,8 +113,8 @@ if __name__ == '__main__':
     # plt.title('Redwood depth image')
     # plt.imshow(np.asarray(rgbd_image.depth)/ 10000)
     # plt.show()
-    # pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_image, o3d.PinholeCameraIntrinsic(
-    #     o3d.PinholeCameraIntrinsicParameters.PrimeSenseDefault))
+    pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_image, o3d.PinholeCameraIntrinsic(
+        o3d.PinholeCameraIntrinsicParameters.PrimeSenseDefault))
     # # Flip it, otherwise the pointcloud will be upside down
     # pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
     # o3d.draw_geometries([pcd])
@@ -164,17 +176,17 @@ if __name__ == '__main__':
     # draw_registration_result_original_color(
     #     source, target, result_icp.transformation)
 
-    voxel_size = 0.005  # means 5cm for the dataset
-    source, target, source_down, target_down, source_fpfh, target_fpfh = \
-        prepare_dataset(voxel_size)
-
-    result_ransac = execute_global_registration(source_down, target_down,
-                                                source_fpfh, target_fpfh, voxel_size)
-    print(result_ransac)
-    draw_registration_result(source_down, target_down,
-                             result_ransac.transformation)
-
-    result_icp = refine_registration(source, target,
-                                     source_fpfh, target_fpfh, voxel_size, result_ransac)
-    print(result_icp)
-    draw_registration_result(source, target, result_icp.transformation)
+    # voxel_size = 0.005  # means 5cm for the dataset
+    # source, target, source_down, target_down, source_fpfh, target_fpfh = \
+    #     prepare_dataset(voxel_size)
+    #
+    # result_ransac = execute_global_registration(source_down, target_down,
+    #                                             source_fpfh, target_fpfh, voxel_size)
+    # print(result_ransac)
+    # draw_registration_result(source_down, target_down,
+    #                          result_ransac.transformation)
+    #
+    # result_icp = refine_registration(source, target,
+    #                                  source_fpfh, target_fpfh, voxel_size, result_ransac)
+    # print(result_icp)
+    # draw_registration_result(source, target, result_icp.transformation)

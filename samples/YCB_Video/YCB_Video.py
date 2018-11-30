@@ -29,15 +29,22 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
 
 import os
 import sys
+import time
 import math
 import numpy as np
 import cv2
-import imgaug
+import pandas as pd
 import skimage.io
 import skimage.color
 import keras.layers as KL
+import keras.backend as KB
 import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.python.client import timeline
+
+from tqdm import tqdm
 
 DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
@@ -48,7 +55,7 @@ ROOT_DIR = os.path.abspath("../../")
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
-from mrcnn import model as modellib, utils
+from mrcnn import model as modellib, utils, visualize
 
 # Path to trained weights file
 COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
@@ -56,6 +63,8 @@ COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Directory to save logs and model checkpoints, if not provided
 # through the command line argument --logs
 DEFAULT_LOGS_DIR = os.path.join(ROOT_DIR, "logs")
+
+
 
 ########################################################################################################################
 #                                                       Utility                                                        #
@@ -83,13 +92,14 @@ def load_image_ids(path):
 ########################################################################################################################
 
 class YCBVDataset(utils.Dataset):
-    def load_ycbv(self, dataset_dir, subset, class_ids=None, use_synthetic=False, use_rgbd=False):
+    def load_ycbv(self, dataset_dir, subset, class_ids=None, use_annotation="label", use_rgbd=False):
         """Load a subset of the COCO dataset.
         dataset_dir: The root directory of the COCO dataset.
         subset: What to load (train, val, minival, valminusminival)
         class_ids: If provided, only loads images that have the given classes.
         use_synthetic: If True uses the synthetic data in the data_syn folder (exclusively?)
         """
+        assert use_annotation in ["label", "skeleton"]
         self.use_rgbd=use_rgbd
         image_sets = os.path.join(dataset_dir, "image_sets/")
         image_dir = os.path.join(dataset_dir, "data/")
@@ -117,7 +127,7 @@ class YCBVDataset(utils.Dataset):
                 path=os.path.join(image_dir, i + "-color.png"),
                 width=640,
                 height=480,
-                annotations=os.path.join(image_dir, i + "-label.png"),
+                annotations=os.path.join(image_dir, i + f"-{use_annotation}.png"),
                 depth=os.path.join(image_dir, i + "-depth.png"),
                 meta=os.path.join(image_dir, i + "-meta.mat"),
                 box=os.path.join(image_dir, i + "-box.txt"))
@@ -239,20 +249,23 @@ class YCBVConfig(Config):
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
-    IMAGE_RESIZE_MODE = "square"#"none"
+    IMAGE_RESIZE_MODE = "square"#"none" #
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
 
+    TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
+    RPN_ANCHOR_RATIOS = [0.5, 1, 2]
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
+    # STEPS_PER_EPOCH = 203
     # TRAIN_ROIS_PER_IMAGE = 100
-    USE_DEPTH_AWARE_OPS = False
+    USE_DEPTH_AWARE_OPS = True
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
@@ -261,6 +274,271 @@ class YCBVConfig(Config):
     #     [[int(math.ceil(image_shape[0] / stride)),
     #       int(math.ceil(image_shape[1] / stride))]
     #      for stride in config.BACKBONE_STRIDES])
+
+########################################################################################################################
+#                                               Image Augmentation                                                     #
+########################################################################################################################
+
+import imgaug as ia
+from imgaug import augmenters as iaa
+
+# random example images
+images = np.random.randint(0, 255, (16, 128, 128, 3), dtype=np.uint8)
+
+# Sometimes(0.5, ...) applies the given augmenter in 50% of all cases,
+# e.g. Sometimes(0.5, GaussianBlur(0.3)) would blur roughly every second image.
+sometimes = lambda aug: iaa.Sometimes(0.5, aug)
+
+# Define our sequence of augmentation steps that will be applied to every image
+# All augmenters with per_channel=0.5 will sample one value _per image_
+# in 50% of all cases. In all other cases they will sample new values
+# _per channel_.
+seq = iaa.Sequential(
+    [
+        # apply the following augmenters to most images
+        iaa.Fliplr(0.5), # horizontally flip 50% of all images
+        iaa.Flipud(0.2), # vertically flip 20% of all images
+        # crop images by -5% to 10% of their height/width
+        sometimes(iaa.CropAndPad(
+            percent=(-0.05, 0.1),
+            pad_mode="constant",
+            pad_cval=0
+        )),
+        sometimes(iaa.Affine(
+            scale={"x": (0.8, 1.2), "y": (0.8, 1.2)}, # scale images to 80-120% of their size, individually per axis
+            translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)}, # translate by -20 to +20 percent (per axis)
+            rotate=(-45, 45), # rotate by -45 to +45 degrees
+            shear=(-16, 16), # shear by -16 to +16 degrees
+            order=[0, 1], # use nearest neighbour or bilinear interpolation (fast)
+            cval=0, # if mode is constant, use a cval between 0 and 255
+            mode="constant" # use any of scikit-image's warping modes (see 2nd image from the top for examples)
+        )),
+        # execute 0 to 5 of the following (less important) augmenters per image
+        # don't execute all of them, as that would often be way too strong
+        iaa.SomeOf((0, 5),
+            [
+                sometimes(iaa.Superpixels(p_replace=(0, 1.0), n_segments=(20, 200))), # convert images into their superpixel representation
+                iaa.OneOf([
+                    iaa.GaussianBlur((0, 3.0)), # blur images with a sigma between 0 and 3.0
+                    iaa.AverageBlur(k=(2, 7)), # blur image using local means with kernel sizes between 2 and 7
+                    iaa.MedianBlur(k=(3, 11)), # blur image using local medians with kernel sizes between 2 and 7
+                ]),
+                iaa.Sharpen(alpha=(0, 1.0), lightness=(0.75, 1.5)), # sharpen images
+                iaa.Emboss(alpha=(0, 1.0), strength=(0, 2.0)), # emboss images
+                # search either for all edges or for directed edges,
+                # blend the result with the original image using a blobby mask
+                iaa.SimplexNoiseAlpha(iaa.OneOf([
+                    iaa.EdgeDetect(alpha=(0.5, 1.0)),
+                    iaa.DirectedEdgeDetect(alpha=(0.5, 1.0), direction=(0.0, 1.0)),
+                ])),
+                iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05*255), per_channel=0.5), # add gaussian noise to images
+                iaa.OneOf([
+                    iaa.Dropout((0.01, 0.1), per_channel=0.5), # randomly remove up to 10% of the pixels
+                    iaa.CoarseDropout((0.03, 0.15), size_percent=(0.02, 0.05), per_channel=0.2),
+                ]),
+                iaa.Invert(0.05, per_channel=True), # invert color channels
+                iaa.Add((-10, 10), per_channel=0.5), # change brightness of images (by -10 to 10 of original value)
+                iaa.AddToHueAndSaturation((-20, 20)), # change hue and saturation
+                # either change the brightness of the whole image (sometimes
+                # per channel) or change the brightness of subareas
+                iaa.OneOf([
+                    iaa.Multiply((0.5, 1.5), per_channel=0.5),
+                    iaa.FrequencyNoiseAlpha(
+                        exponent=(-4, 0),
+                        first=iaa.Multiply((0.5, 1.5), per_channel=True),
+                        second=iaa.ContrastNormalization((0.5, 2.0))
+                    )
+                ]),
+                iaa.ContrastNormalization((0.5, 2.0), per_channel=0.5), # improve or worsen the contrast
+                # iaa.Grayscale(alpha=(0.0, 1.0)), # This thorws and CV2 Error sometimes (always?)
+                sometimes(iaa.ElasticTransformation(alpha=(0.5, 3.5), sigma=0.25,
+                                                    mode="constant", cval=0)), # move pixels locally around (with random strengths)
+                sometimes(iaa.PiecewiseAffine(scale=(0.01, 0.05), mode="constant", cval=0)), # sometimes move parts of the image around
+                sometimes(iaa.PerspectiveTransform(scale=(0.01, 0.1)))
+            ],
+            random_order=True
+        )
+    ],
+    random_order=True
+)
+
+aug = iaa.WithChannels(
+    channels=[0, 1, 2],
+    children=seq
+)
+
+
+########################################################################################################################
+#                                                   Evaluation                                                         #
+########################################################################################################################
+
+def compute_matches(gt_boxes, gt_class_ids, gt_masks,
+                    pred_boxes, pred_class_ids, pred_scores, pred_masks,
+                    iou_threshold=0.5, score_threshold=0.0):
+    """Finds matches between prediction and ground truth instances.
+
+    Returns:
+        gt_match: 1-D array. For each GT box it has the index of the matched
+                  predicted box.
+        pred_match: 1-D array. For each predicted box, it has the index of
+                    the matched ground truth box.
+        overlaps: [pred_boxes, gt_boxes] IoU overlaps.
+    """
+    # Trim zero padding
+    # TODO: cleaner to do zero unpadding upstream
+    gt_boxes = utils.trim_zeros(gt_boxes)
+    gt_masks = gt_masks[..., :gt_boxes.shape[0]]
+    pred_boxes = utils.trim_zeros(pred_boxes)
+    pred_scores = pred_scores[:pred_boxes.shape[0]]
+    # Sort predictions by score from high to low
+    indices = np.argsort(pred_scores)[::-1]
+    pred_boxes = pred_boxes[indices]
+    pred_class_ids = pred_class_ids[indices]
+    pred_scores = pred_scores[indices]
+    pred_masks = pred_masks[..., indices]
+
+    # Compute IoU overlaps [pred_masks, gt_masks]
+    overlaps = utils.compute_overlaps_masks(pred_masks, gt_masks)
+
+    # Loop through predictions and find matching ground truth boxes
+    match_count = 0
+    pred_match = -1 * np.ones([pred_boxes.shape[0]])
+    gt_match = -1 * np.ones([gt_boxes.shape[0]])
+    mask_f1 = -1 * np.ones([gt_boxes.shape[0]])
+    for i in range(len(pred_boxes)):
+        # Find best matching ground truth box
+        # 1. Sort matches by score
+        sorted_ixs = np.argsort(overlaps[i])[::-1]
+        # 2. Remove low scores
+        low_score_idx = np.where(overlaps[i, sorted_ixs] < score_threshold)[0]
+        if low_score_idx.size > 0:
+            sorted_ixs = sorted_ixs[:low_score_idx[0]]
+        # 3. Find the match
+        for j in sorted_ixs:
+            # If ground truth box is already matched, go to next one
+            if gt_match[j] > -1:
+                continue
+            # If we reach IoU smaller than the threshold, end the loop
+            iou = overlaps[i, j]
+            if iou < iou_threshold:
+                break
+            # Do we have a match?
+            mask_true_pos = np.sum(np.logical_and(pred_masks[:, :, i], gt_masks[:, :, j]))
+            mask_false_neg = np.sum(np.logical_and(np.logical_not(pred_masks[:, :, i]), gt_masks[:, :, j]))
+            mask_false_pos = np.sum(np.logical_and(pred_masks[:, :, i], np.logical_not(gt_masks[:, :, j])))
+            mask_recall = mask_true_pos / (mask_true_pos + mask_false_neg)
+            mask_precision = mask_true_pos / (mask_true_pos +  mask_false_pos)
+            mask_f1[j] = mask_precision * mask_recall / (mask_precision + mask_recall)
+            if pred_class_ids[i] == gt_class_ids[j]:
+                match_count += 1
+                gt_match[j] = i
+                pred_match[i] = j
+                break
+
+    return gt_match, pred_match, overlaps, mask_f1
+
+def compute_ap(gt_boxes, gt_class_ids, gt_masks,
+               pred_boxes, pred_class_ids, pred_scores, pred_masks,
+               iou_threshold=0.5):
+    """Compute Average Precision at a set IoU threshold (default 0.5).
+
+    Returns:
+    mAP: Mean Average Precision
+    precisions: List of precisions at different class score thresholds.
+    recalls: List of recall values at different class score thresholds.
+    overlaps: [pred_boxes, gt_boxes] IoU overlaps.
+    """
+    # Get matches and overlaps
+    gt_match, pred_match, overlaps, mask_f1 = compute_matches(
+        gt_boxes, gt_class_ids, gt_masks,
+        pred_boxes, pred_class_ids, pred_scores, pred_masks,
+        iou_threshold)
+
+    # Compute precision and recall at each prediction box step
+    precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
+    recalls = np.cumsum(pred_match > -1).astype(np.float32) / len(gt_match)
+
+    # Pad with start and end values to simplify the math
+    precisions = np.concatenate([[0], precisions, [0]])
+    recalls = np.concatenate([[0], recalls, [1]])
+
+    # Ensure precision values decrease but don't increase. This way, the
+    # precision value at each recall threshold is the maximum it can be
+    # for all following recall thresholds, as specified by the VOC paper.
+    for i in range(len(precisions) - 2, -1, -1):
+        precisions[i] = np.maximum(precisions[i], precisions[i + 1])
+
+    # Compute mean AP over recall range
+    # TODO: this is rather an F1 score than an mean average precision?
+    indices = np.where(recalls[:-1] != recalls[1:])[0] + 1
+    mAP = np.sum((recalls[indices] - recalls[indices - 1]) *
+                 precisions[indices])
+
+    return mAP, precisions, recalls, overlaps, mask_f1
+
+def evaluate_YCBV(model, dataset, config, eval_type="bbox", limit=0, image_ids=None, plot=False, random=True):
+    """Runs YCBV evaluation.
+        dataset: A Dataset object with valiadtion data
+        eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
+        limit: if not 0, it's the number of images to use for evaluation
+        """
+    # Pick COCO images from the dataset
+    image_ids = image_ids or dataset.image_ids
+    # classes_dict = load_classes_id_dict()
+    if random:
+        image_ids = np.random.permutation(image_ids)
+    # Limit to a subset
+    if limit:
+        image_ids = image_ids[:limit]
+
+    t_prediction = {}
+    t_start = time.time()
+
+    results = []
+    APs, precisions, recalls, overlaps, mask_f1s = {}, {}, {}, {}, {}
+    # for i, image_id in enumerate(tqdm(image_ids)):
+    for i, image_id in enumerate(image_ids):
+
+        # Load image
+        image = dataset.load_image(image_id)
+
+        # Run detection
+        t = time.time()
+        r = model.detect([image], verbose=0)[0]
+        t_prediction[image_id] = (time.time() - t)
+
+
+        # gt_image, gt_image_meta, gt_class_ids, gt_bbox, gt_mask = modellib.load_image_gt(dataset, config, image_id)
+        gt_image = dataset.load_image(image_id)
+        gt_mask, gt_class_ids = dataset.load_mask(image_id)
+        gt_bbox = utils.extract_bboxes(gt_mask)
+        AP, precision, recall, overlap, mask_f1 = \
+            compute_ap(gt_bbox, gt_class_ids, gt_mask,
+                             r['rois'], r['class_ids'], r['scores'], r['masks'])
+        if plot:
+            fig, ax = plt.subplots(1, 2)
+            visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], dataset.class_names, r['scores'], ax=ax[0])
+            visualize.display_instances(gt_image, gt_bbox, gt_mask, gt_class_ids, dataset.class_names,
+                                        ax=ax[1])
+            fig.tight_layout(pad=0)
+            fig.subplots_adjust(wspace=0)
+            plt.show()
+            visualize.plot_overlaps(gt_class_ids, r['class_ids'], r['scores'],
+                                    overlap, dataset.class_names, threshold=config.DETECTION_MIN_CONFIDENCE)
+        APs[image_id] = AP
+        precisions[image_id] = precision
+        recalls[image_id] = recall
+        overlaps[image_id] = overlap
+        mask_f1s[image_id] = np.mean(mask_f1[mask_f1 > -1])
+    result = pd.DataFrame(data={"mAPs": APs, "mF1s": mask_f1s, "recall": recalls, "precision": precisions,
+                                "overlap": overlaps, "times": t_prediction})
+    mAP = result["mAPs"].mean()
+    mF1 = result["mF1s"].mean()
+    print(f"mAP of the class prediction: {mAP}. mF1 of the predicted masks: {mF1}")
+    print("Prediction time: {}. Average {}/image".format(
+        result["times"].sum(), result["times"].mean()))
+    print("Total time: ", time.time() - t_start)
+    return result
 
 
 ########################################################################################################################
@@ -296,13 +574,17 @@ if __name__ == '__main__':
                         metavar="/path/to/logs/",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--limit', required=False,
-                        default=500,
+                        default=100,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
     parser.add_argument('--depth_aware', required=False, type=str2bool,
                        default=False,
-                       metavar="<image count>",
+                       metavar="<use-depth-awareness>",
                        help='Train with depth-aware operations')
+    parser.add_argument('--debug', required=False,
+                        default=False,
+                        metavar="<debug>",
+                        help='Start a Debug-Session at port 7000')
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
@@ -310,6 +592,14 @@ if __name__ == '__main__':
     print("Logs: ", args.logs)
     print("Depth Awareness: ", args.depth_aware)
 
+    if args.debug:
+        from tensorflow.python import debug as tf_debug
+        sess = tf.Session()
+        if args.debug == "cli":
+            sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        else:
+            sess = tf_debug.TensorBoardDebugWrapperSession(sess, "i61nb003:7000")
+        KB.set_session(sess)
 
     # Configurations
     if args.command == "train":
@@ -326,7 +616,8 @@ if __name__ == '__main__':
             # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
             GPU_COUNT = 1
             IMAGES_PER_GPU = 1
-            DETECTION_MIN_CONFIDENCE = 0
+            DETECTION_MIN_CONFIDENCE = 0.9
+            USE_DEPTH_AWARE_OPS = args.depth_aware
         config = InferenceConfig()
     config.display()
 
@@ -383,48 +674,83 @@ if __name__ == '__main__':
         # Right/Left flip 50% of the time
         # TODO: if image is flipped, the 6d Pose changes --> make amends
         # TODO: check if image augmentation works for rgbd images as well, then create more sophisticated augmentation
-        augmentation = imgaug.augmenters.Fliplr(0.5)
+        augmentation = ia.augmenters.Fliplr(0.5)
         # augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
-        print("Training network heads")
+        print(f"Training network heads & profiling to {args.logs}")
         layers = "heads"
+        # builder = tf.profiler.ProfileOptionBuilder
+        # opts = builder(builder.time_and_memory()).order_by('micros').build()
+        # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=40,
+                    epochs=1,
                     layers=layers,
                     augmentation=augmentation)
+        tl = timeline.Timeline(model.run_metadata.step_stats)
+        ctf = tl.generate_chrome_trace_format()
+
+        with open('./timeline.json', 'w') as f:
+            f.write(ctf)
+
+        ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
+        opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
+                                    ).with_node_names(show_name_regexes=['.*']).build()
+        # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
+        prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        prof.add_step(1, model.run_metadata)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        if args.depth_aware:
-            layers = "4+"
-        else:
-            layers = '4+'
+        layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=100,
                     layers=layers,
                     augmentation=augmentation)
+        prof.add_step(2, model.run_metadata)
 
-        # Training - Stage 3
-        # Fine tune all layers
+
+        # # Training - Stage 3
+        # # Fine tune all layers
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 10,
-                    epochs=180,
-                    layers='all',
-                    augmentation=augmentation)
+                        learning_rate=config.LEARNING_RATE / 10,
+                        epochs=180,
+                        layers='all',
+                        augmentation=augmentation)
+        prof.add_step(3, model.run_metadata)
+        with open('./profile_rgbd', 'wb') as f:
+            f.write(prof.serialize_to_string())
 
-    # elif args.command == "evaluate":
-    #     # Validation dataset
-    #     dataset_val = CocoDataset()
-    #     val_type = "val" if args.year in '2017' else "minival"
-    #     coco = dataset_val.load_coco(args.dataset, val_type, year=args.year, return_coco=True, auto_download=args.download)
-    #     dataset_val.prepare()
-    #     print("Running COCO evaluation on {} images.".format(args.limit))
-    #     evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
+    elif args.command == "evaluate":
+        # Validation dataset
+        dataset_val = YCBVDataset()
+        val_type = "minival"
+        dataset_val.load_ycbv(args.dataset, val_type, use_rgbd=args.depth_aware)
+        dataset_val.prepare()
+        num = args.limit or len(dataset_val.image_ids)
+        print(f"Running YCBV evaluation on {num} images.")
+        result = evaluate_YCBV(model, dataset_val, config, "bbox", limit=int(args.limit), plot=False)
+        result.to_pickle(model_path[:-3] + "_eval.pkl")
+    elif args.command == "blub":
+        dataset_train = YCBVDataset()
+        dataset_train.load_ycbv(args.dataset, "train", use_rgbd=args.depth_aware)
+        dataset_train.prepare()
+        fig, ax = plt.subplots(5, 2)
+        for j in range(5):
+            for i in range(2):
+                # ax[0].cla()
+                # ax[1].cla()
+                # fig, ax = plt.subplots(1, 2)
+                # plt.close("all")
+                image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset_train, config, dataset_train.image_ids[0], augmentation=seq)
+                visualize.display_instances(image, bbox, mask, class_ids, dataset_train.class_names, ax=ax[j, i])
+                # ax[1].imshow(image[:, :, 3])
+        plt.show()
+
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.command))
