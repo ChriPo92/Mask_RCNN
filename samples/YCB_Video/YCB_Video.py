@@ -589,6 +589,10 @@ if __name__ == '__main__':
                         default=False,
                         metavar="<continue_training>",
                         help='If true, continues training; otherwise start at epoch 0!')
+    parser.add_argument('--annotation', required=False,
+                        default="label",
+                        metavar="<which_annotation>",
+                        help='Which annotations to use for the image. For now only "label" or "skeleton" are used')
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
@@ -596,6 +600,7 @@ if __name__ == '__main__':
     print("Logs: ", args.logs)
     print("Depth Awareness: ", args.depth_aware)
     print("Continue Training: ", args.continue_training)
+    print("Annotation: ", args.annotation)
 
     if args.debug:
         from tensorflow.python import debug as tf_debug
@@ -666,13 +671,13 @@ if __name__ == '__main__':
         # validation set, as as in the Mask RCNN paper.
 
         dataset_train = YCBVDataset()
-        dataset_train.load_ycbv(args.dataset, "train", use_rgbd=args.depth_aware)
+        dataset_train.load_ycbv(args.dataset, "train", use_rgbd=args.depth_aware, use_annotation=args.annotation)
         dataset_train.prepare()
 
         # Validation dataset
         dataset_val = YCBVDataset()
         val_type = "minival"
-        dataset_val.load_ycbv(args.dataset, val_type, use_rgbd=args.depth_aware)
+        dataset_val.load_ycbv(args.dataset, val_type, use_rgbd=args.depth_aware, use_annotation=args.annotation)
         dataset_val.prepare()
 
         # Image Augmentation
@@ -684,12 +689,12 @@ if __name__ == '__main__':
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         print("Training Resnet & profiling")
-        layers = "resnet"
+        layers = "head"
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE * 10,
+                    learning_rate=config.LEARNING_RATE,
                     epochs=40,
                     layers=layers,
                     augmentation=augmentation)
@@ -723,7 +728,7 @@ if __name__ == '__main__':
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                         learning_rate=config.LEARNING_RATE / 10,
-                        epochs=200,
+                        epochs=180,
                         layers='all',
                         augmentation=augmentation)
         # prof.add_step(3, model.run_metadata)
