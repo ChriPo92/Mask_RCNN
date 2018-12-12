@@ -689,7 +689,8 @@ if __name__ == '__main__':
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         print("Training Resnet & profiling")
-        layers = "head"
+        layers = "heads"
+        # layers = "resnet"
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()

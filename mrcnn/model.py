@@ -153,21 +153,22 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
     bn_name_base = 'bn' + str(stage) + block + '_branch'
 
     x, d = convolution_layer(input_tensor, nb_filter1, (1, 1), depth_image=depth,
-                          name=conv_name_base + '2a', use_bias=use_bias, sim_factor=1.0 / stage)
+                          name=conv_name_base + '2a', use_bias=use_bias, sim_factor=8.3 / stage)
     x = BatchNorm(name=bn_name_base + '2a')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
     x, d = convolution_layer(x, nb_filter2, (kernel_size, kernel_size), depth_image=d,
-                          padding='same', name=conv_name_base + '2b', use_bias=use_bias, sim_factor=1.0 / stage)
+                          padding='same', name=conv_name_base + '2b', use_bias=use_bias, sim_factor=8.3 / stage)
     x = BatchNorm(name=bn_name_base + '2b')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
     x, d = convolution_layer(x, nb_filter3, (1, 1), depth_image=d, name=conv_name_base + '2c',
-                             use_bias=use_bias, sim_factor=1.0 / stage)
+                             use_bias=use_bias, sim_factor=8.3 / stage)
     x = BatchNorm(name=bn_name_base + '2c')(x, training=train_bn)
 
     x = KL.Add()([x, input_tensor])
-    # d = KL.Add()([d, depth])
+    if depth is not None:
+        d = KL.Add()([d, depth])
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
     return x, d
 
@@ -191,27 +192,28 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     conv_name_base = 'res' + str(stage) + block + '_branch'
     bn_name_base = 'bn' + str(stage) + block + '_branch'
 
-    x, d = convolution_layer(input_tensor, nb_filter1, (1, 1), strides=strides, depth_image=depth,
-                  name=conv_name_base + '2a', use_bias=use_bias, sim_factor=1.0 / stage)
+    x, d = convolution_layer(input_tensor, nb_filter1, (1, 1), strides=strides, depth_image=None,
+                  name=conv_name_base + '2a', use_bias=use_bias, sim_factor=8.3 / stage)
     x = BatchNorm(name=bn_name_base + '2a')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x, d = convolution_layer(x, nb_filter2, (kernel_size, kernel_size), depth_image=d, padding='same',
-                  name=conv_name_base + '2b', use_bias=use_bias, sim_factor=1.0 / stage)
+    x, d = convolution_layer(x, nb_filter2, (kernel_size, kernel_size), depth_image=None, padding='same',
+                  name=conv_name_base + '2b', use_bias=use_bias, sim_factor=8.3 / stage)
     x = BatchNorm(name=bn_name_base + '2b')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x, d = convolution_layer(x, nb_filter3, (1, 1), depth_image=d, name=conv_name_base +
-                                           '2c', use_bias=use_bias, sim_factor=1.0 / stage)
+    x, d = convolution_layer(x, nb_filter3, (1, 1), depth_image=None, name=conv_name_base +
+                                           '2c', use_bias=use_bias, sim_factor=8.3 / stage)
     x = BatchNorm(name=bn_name_base + '2c')(x, training=train_bn)
 
     shortcut, s_d = convolution_layer(input_tensor, nb_filter3, (1, 1), depth_image=depth, strides=strides,
-                         name=conv_name_base + '1', use_bias=use_bias)
+                         name=conv_name_base + '1', use_bias=use_bias, sim_factor=8.3 / stage)
     shortcut = BatchNorm(name=bn_name_base + '1')(shortcut, training=train_bn)
 
     x = KL.Add()([x, shortcut])
-    # # TODO: does it make sense to add these?
-    # d = KL.Add()([d, s_d])
+    # # TODO: Change this back when using depth convolutions in all parts?
+    # if depth is not None:
+    #     d = KL.Add()([d, s_d])
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
     return x, s_d
 
@@ -230,34 +232,34 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True, depth_i
     else:
         d = None
     x, d = convolution_layer(x, 64, (7, 7), strides=(2, 2), name='res1_conv', use_bias=True, depth_image=d,
-                             sim_factor=2.0)
+                             sim_factor=8.3)
     x = BatchNorm(name='bn_conv1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     x, d = pooling_layer(x, (3, 3), strides=(2, 2), padding="same", depth_image=d)
     C1 = x
     # Stage 2
     x, d = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn, depth=d)
-    x, d = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn, depth=d)
-    x, d = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn, depth=d)
+    x, _ = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn, depth=None)
+    x, _ = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn, depth=None)
     C2 = x
     # Stage 3
     x, d = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn, depth=d)
-    x, d = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn, depth=d)
-    x, d = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn, depth=d)
-    x, d = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn, depth=d)
+    x, _ = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn, depth=None)
+    x, _ = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn, depth=None)
+    x, _ = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn, depth=None)
     C3 = x
     # Stage 4
     x, d = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn, depth=d)
     block_count = {"resnet50": 5, "resnet101": 22}[architecture]
     for i in range(block_count):
-        x, d = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn, depth=d)
+        x, _ = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn, depth=None)
         # x = KL.Lambda(lambda y: tf.Print(y, [tf.shape(y)], message="This is the shape of x: "))(x)
     C4 = x
     # Stage 5
     if stage5:
         x, d = conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn, depth=d)
-        x, d = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn, depth=d)
-        x, d = identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn, depth=d)
+        x, d = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn, depth=None)
+        x, d = identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn, depth=None)
         C5 = x
     else:
         C5 = None
