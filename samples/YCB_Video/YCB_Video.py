@@ -602,7 +602,7 @@ if __name__ == '__main__':
     print("Continue Training: ", args.continue_training)
     print("Annotation: ", args.annotation)
 
-    if args.debug:
+    if args.debug.lower() != "false":
         from tensorflow.python import debug as tf_debug
         sess = tf.Session()
         if args.debug == "cli":
@@ -706,18 +706,18 @@ if __name__ == '__main__':
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
-        tl = timeline.Timeline(model.run_metadata.step_stats)
-        ctf = tl.generate_chrome_trace_format()
-
-        with open('./timeline.json', 'w') as f:
-            f.write(ctf)
-
+        # tl = timeline.Timeline(model.run_metadata.step_stats)
+        # ctf = tl.generate_chrome_trace_format()
+        #
+        # with open('./timeline.json', 'w') as f:
+        #     f.write(ctf)
+        #
         # ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
         # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
         #                             ).with_node_names(show_name_regexes=['.*']).build()
-        # # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
-        # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
-        # prof.add_step(1, model.run_metadata)
+        # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
+        prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        prof.add_step(1, model.run_metadata)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up

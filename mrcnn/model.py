@@ -422,9 +422,10 @@ class PyramidROIAlign(KE.Layer):
     constructor.
     """
 
-    def __init__(self, pool_shape, **kwargs):
+    def __init__(self, pool_shape, depth_image=None, **kwargs):
         super(PyramidROIAlign, self).__init__(**kwargs)
         self.pool_shape = tuple(pool_shape)
+        self.depth_image=depth_image
 
     def call(self, inputs):
         # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
@@ -435,7 +436,7 @@ class PyramidROIAlign(KE.Layer):
         image_meta = inputs[1]
 
         # Feature Maps. List of feature maps from different level of the
-        # feature pyramid. Each is [batch, height, width, channels]
+        # feature pyramid. Each is [batch, height, width, TOP_DOWN_PYRAMID_SIZE]
         feature_maps = inputs[2:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
@@ -456,6 +457,8 @@ class PyramidROIAlign(KE.Layer):
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         pooled = []
         box_to_level = []
+        if self.depth_image is not None:
+            pooled_depth = []
         for i, level in enumerate(range(2, 6)):
             ix = tf.where(tf.equal(roi_level, level))
             level_boxes = tf.gather_nd(boxes, ix)
@@ -482,10 +485,19 @@ class PyramidROIAlign(KE.Layer):
             pooled.append(tf.image.crop_and_resize(
                 feature_maps[i], level_boxes, box_indices, self.pool_shape,
                 method="bilinear"))
+            # repeat the same operation for the depth input image, so that 3D
+            # informations can be retained
+            # TODO: check if this is correct
+            if self.depth_image is not None:
+                pooled_depth.append(tf.image.crop_and_resize(
+                self.depth_image, level_boxes, box_indices, self.pool_shape,
+                method="bilinear"))
 
         # Pack pooled features into one tensor
         pooled = tf.concat(pooled, axis=0)
 
+        if self.depth_image is not None:
+            pooled_depth = tf.concat(pooled_depth, axis=0)
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
         box_to_level = tf.concat(box_to_level, axis=0)
@@ -505,9 +517,18 @@ class PyramidROIAlign(KE.Layer):
         # Re-add the batch dimension
         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
         pooled = tf.reshape(pooled, shape)
+
+        if self.depth_image is not None:
+            pooled_depth = tf.gather(pooled_depth, ix)
+            shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled_depth)[1:]], axis=0)
+            pooled_depth = tf.reshape(pooled_depth, shape)
+            return pooled, pooled_depth
         return pooled
 
     def compute_output_shape(self, input_shape):
+        if self.depth_image is not None:
+            return [(input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)),
+                    (input_shape[0][:2] + self.pool_shape + (1,))]
         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)
 
 
@@ -982,7 +1003,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                      proposal boxes
     """
     # ROI Pooling
-    # Shape: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
+    # Shape: [batch, num_rois, POOL_SIZE, POOL_SIZE, TOP_DOWN_PYRAMID_SIZE]
     x = PyramidROIAlign([pool_size, pool_size],
                         name="roi_align_classifier")([rois, image_meta] + feature_maps)
     # Two 1024 FC layers (implemented with Conv2D for consistency)
@@ -1066,9 +1087,41 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
                            name="mrcnn_mask")(x)
     return x
 
-# def build_fpn_sekelton_graph(rois, feature_maps, image_meta,
-#                          pool_size, num_classes, train_bn=True):
-#
+def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
+                         num_classes, train_bn=True):
+    # ROIAlign returning [batch, num_rois, 4, 4, channels] so that in the end a 4x4 matrix
+    # is predicted for every class
+    x, d = PyramidROIAlign([4, 4], depth_image=depth_image,
+                        name="roi_align_pose")([rois, image_meta] + feature_maps)
+    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
+                              return_depth=True, name="mrcnn_pose_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_pose_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
+                              return_depth=True, name="mrcnn_pose_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_pose_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
+                              return_depth=True, name="mrcnn_pose_conv3")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_pose_bn3')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
+                              return_depth=True, name="mrcnn_pose_conv4")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_pose_bn4')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
+                           name="mrcnn_pose_deconv")(x)
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
+                           name="mrcnn_pose")(x)
+    return x
 
 
 ############################################################
@@ -1252,6 +1305,35 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     # loss = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 2: ", summarize=200))(loss)
     return loss
 
+def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_poses):
+    target_class_ids = K.reshape(target_class_ids, (-1,))
+    target_poses = K.reshape(target_poses, (-1, 4, 4))
+    pred_shape = tf.shape(pred_poses)
+    pred_poses = K.reshape(pred_poses,
+                           (-1, pred_shape[2], pred_shape[3], pred_shape[4]))
+    # Permute predicted masks to [N, num_classes, height, width]
+    pred_poses = tf.transpose(pred_poses, [0, 3, 1, 2])
+    positive_ix = tf.where(target_class_ids > 0)[:, 0]
+    positive_class_ids = tf.cast(
+        tf.gather(target_class_ids, positive_ix), tf.int64)
+    indices = tf.stack([positive_ix, positive_class_ids], axis=1)
+
+    # Gather the masks (predicted and true) that contribute to loss
+    y_true = tf.gather(target_poses, positive_ix)
+    y_pred = tf.gather_nd(pred_poses, indices)
+
+    # Nearest Neighbor calculation using L1 Distance
+    # https://github.com/aymericdamien/TensorFlow-Examples/blob/master/examples/2_BasicModels/nearest_neighbor.py
+    # Calculate L1 Distance
+    distance = tf.reduce_sum(tf.abs(tf.add(xtr, tf.negative(xte))), reduction_indices=1)
+    # Prediction: Get min distance index (Nearest neighbor)
+    pred = tf.arg_min(distance, 0)
+
+    loss = K.switch(tf.size(y_true) > 0,
+                    K.binary_crossentropy(target=y_true, output=y_pred),
+                    tf.constant(0.0))
+    loss = K.mean(loss)
+    return loss
 
 ############################################################
 #  Data Generator
@@ -2007,6 +2089,7 @@ class MaskRCNN():
                                              stage5=True, train_bn=config.TRAIN_BN, depth_image=input_depth)
         # Top-down Layers
         # TODO: add assert to varify feature map sizes match what's in config
+        # All layers are cast to TOP_DOWN_PYRAMID_SIZE channels
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
             KL.UpSampling2D(size=(2, 2), name="fpn_p5upsampled")(P5),
@@ -2029,7 +2112,7 @@ class MaskRCNN():
         # Note that P6 is used in RPN, but not in the classifier heads.
         #
         # The problem here is, that everything is calculated based on these feature maps, but these feature maps
-        # are calculated mostly independent of depth (exept for the layers that use DA ops) and therefore contain only
+        # are calculated mostly independent of depth (except for the layers that use DA ops) and therefore contain only
         # minimal information about the depth
         # TODO: encode more (representative) depth/geometric information into the feature maps smhw
         rpn_feature_maps = [P2, P3, P4, P5, P6]
@@ -2547,7 +2630,7 @@ class MaskRCNN():
         application.
 
         detections: [N, (y1, x1, y2, x2, class_id, score)] in normalized coordinates
-        mrcnn_mask: [N, height, width, num_classes]
+        mrcnn_mask: [N, MASK_POOL_SIZE, MASK_POOL_SIZE, num_classes]
         original_image_shape: [H, W, C] Original image shape before resizing
         image_shape: [H, W, C] Shape of the image after resizing and padding
         window: [y1, x1, y2, x2] Pixel coordinates of box in the image where the real
