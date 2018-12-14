@@ -688,15 +688,22 @@ if __name__ == '__main__':
         # augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
+        num = 0
         print("Training Resnet & profiling")
-        layers = "heads"
         # layers = "resnet"
+        # model.train(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE * 10,
+        #             epochs=40,
+        #             layers=layers,
+        #             augmentation=augmentation)
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
+        num += 40
+        layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=40,
+                    epochs=num,
                     layers=layers,
                     augmentation=augmentation)
         tl = timeline.Timeline(model.run_metadata.step_stats)
@@ -714,11 +721,12 @@ if __name__ == '__main__':
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
+        num += 60
         layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=100,
+                    epochs=num,
                     layers=layers,
                     augmentation=augmentation)
         # prof.add_step(2, model.run_metadata)
@@ -726,10 +734,11 @@ if __name__ == '__main__':
 
         # # Training - Stage 3
         # # Fine tune all layers
+        num += 80
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                         learning_rate=config.LEARNING_RATE / 10,
-                        epochs=180,
+                        epochs=num,
                         layers='all',
                         augmentation=augmentation)
         # prof.add_step(3, model.run_metadata)
