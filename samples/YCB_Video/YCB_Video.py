@@ -512,9 +512,13 @@ def evaluate_YCBV(model, dataset, config, eval_type="bbox", limit=0, image_ids=N
         gt_image = dataset.load_image(image_id)
         gt_mask, gt_class_ids = dataset.load_mask(image_id)
         gt_bbox = utils.extract_bboxes(gt_mask)
-        AP, precision, recall, overlap, mask_f1 = \
-            compute_ap(gt_bbox, gt_class_ids, gt_mask,
-                             r['rois'], r['class_ids'], r['scores'], r['masks'])
+        try:
+            AP, precision, recall, overlap, mask_f1 = \
+                compute_ap(gt_bbox, gt_class_ids, gt_mask,
+                                 r['rois'], r['class_ids'], r['scores'], r['masks'])
+        except IndexError:
+            print(f"Skipping Image {image_id} because of IndexError")
+            continue
         if plot:
             fig, ax = plt.subplots(1, 2)
             visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], dataset.class_names, r['scores'], ax=ax[0])
@@ -582,7 +586,7 @@ if __name__ == '__main__':
                        metavar="<use-depth-awareness>",
                        help='Train with depth-aware operations')
     parser.add_argument('--debug', required=False,
-                        default=False,
+                        default="false",
                         metavar="<debug>",
                         help='Start a Debug-Session at port 7000')
     parser.add_argument('--continue_training', required=False, type=str2bool,
