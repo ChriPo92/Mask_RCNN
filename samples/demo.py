@@ -44,11 +44,11 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd_custom_da_resnet_graph.h5")
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/skeleton_rcnn_ycbv_rgb.h5")
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd.h5")
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
-if not os.path.exists(COCO_MODEL_PATH):
-    utils.download_trained_weights(COCO_MODEL_PATH)
+# if not os.path.exists(COCO_MODEL_PATH):
+#     utils.download_trained_weights(COCO_MODEL_PATH)
 
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "images")
@@ -72,7 +72,7 @@ class InferenceConfig(YCBVConfig):
     DETECTION_MIN_CONFIDENCE = 0.1
     # DETECTION_NMS_THRESHOLD = 0.1
     USE_DEPTH_AWARE_OPS = False
-    # IMAGE_CHANNEL_COUNT = 3
+    # IMAGE_CHANNEL_COUNT = 4
 
     # Image mean (RGB)
     # MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 0.0])
@@ -186,22 +186,22 @@ def load_classes_id_dict():
 
 
 dataset = YCBVDataset()
-dataset.load_ycbv("/home/christoph/Hitachi/YCB_Video_Dataset/", "train", use_rgbd=config.USE_DEPTH_AWARE_OPS, use_annotation="skeleton")
+dataset.load_ycbv("/home/christoph/Hitachi/YCB_Video_Dataset/", "trainval", use_rgbd=config.USE_DEPTH_AWARE_OPS, use_annotation="skeleton")
 dataset.prepare()
 
 # dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-depth.png"
 # img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0000/000527-color.png"
-img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0081/000982-color.png"
-dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0054/000001-depth.png"
-# dpt_file = "/home/christoph/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-58.799_depth.png"
-# img_file = "/home/christoph/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-58.799_rgb.png"
+# img_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0081/000982-color.png"
+# dpt_file = "/home/christoph/Hitachi/YCB_Video_Dataset/data/0054/000001-depth.png"
+dpt_file = "/home/christoph/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-34.152_depth.png"
+img_file = "/home/christoph/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-34.152_rgb.png"
 import skimage.io as skio
 
-# image = skio.imread(img_file)
-image = dataset.load_image(dataset.image_from_source_map["YCBV.0081/000982"])
+image = skio.imread(img_file)
+# image = dataset.load_image(dataset.image_from_source_map["YCBV.0081/000982"])
 depth = skio.imread(dpt_file)
-# depth = (np.left_shift(depth[:, :, 1].astype(np.uint32), 8) + depth[:, :, 0]) / 1000.
-depth = depth / 10000
+depth = ((np.left_shift(depth[:, :, 1].astype(np.uint32), 8) + depth[:, :, 0]) / 1000.)
+# depth = depth / 10000
 # image = cv2.imread(img_file, -1)
 # depth = cv2.imread(dpt_file, -1) / 10000
 bboxs = load_bbox("0000/000527")
@@ -236,7 +236,7 @@ ax[1].imshow(depth)
 classes_dict = load_classes_id_dict()
 
 
-image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset, config, dataset.image_from_source_map["YCBV.0081/000982"])
+image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset, config, dataset.image_from_source_map["YCBV.0054/000016"])
 # Run detection
 # results = model.detect([np.concatenate((image, np.expand_dims(depth, 2)), axis=2)], verbose=1)
 results = model.detect([image], verbose=1)
@@ -244,7 +244,7 @@ results = model.detect([image], verbose=1)
 # Visualize results
 r = results[0]
 visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], classes_dict, r['scores'])
-visualize.display_differences(image, bbox, class_ids, mask, r['rois'], r['class_ids'], r['scores'], r['masks'], classes_dict)
+# visualize.display_differences(image, bbox, class_ids, mask, r['rois'], r['class_ids'], r['scores'], r['masks'], classes_dict)
 
 
 #

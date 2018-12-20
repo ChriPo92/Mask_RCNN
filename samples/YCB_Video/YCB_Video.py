@@ -566,7 +566,8 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', required=True,
                         metavar="/path/to/ycbv/",
                         help='Directory of the YCB Video dataset')
-    parser.add_argument('--model', required=True,
+    parser.add_argument('--model', required=False,
+                        default=None,
                         metavar="/path/to/weights.h5",
                         help="Path to weights .h5 file or 'coco'")
     parser.add_argument('--logs', required=False,
@@ -638,32 +639,34 @@ if __name__ == '__main__':
     else:
         model = modellib.MaskRCNN(mode="inference", config=config,
                                   model_dir=args.logs)
+    if args.model is not None:
+        # Select weights file to load
+        if args.model.lower() == "coco":
+            model_path = COCO_MODEL_PATH
+            # Download weights file
+            if not os.path.exists(model_path):
+                utils.download_trained_weights(model_path)
+        elif args.model.lower() == "last":
+            # Find last trained weights
+            model_path = model.find_last()
+        elif args.model.lower() == "imagenet":
+            # Start from ImageNet trained weights
+            model_path = model.get_imagenet_weights()
+        else:
+            model_path = args.model
 
-    # Select weights file to load
-    if args.model.lower() == "coco":
-        model_path = COCO_MODEL_PATH
-        # Download weights file
-        if not os.path.exists(model_path):
-            utils.download_trained_weights(model_path)
-    elif args.model.lower() == "last":
-        # Find last trained weights
-        model_path = model.find_last()
-    elif args.model.lower() == "imagenet":
-        # Start from ImageNet trained weights
-        model_path = model.get_imagenet_weights()
+        # Load weights
+        print("Loading weights ", model_path)
+        if args.model.lower() == "coco":
+            # Exclude the last layers because they require a matching
+            # number of classes
+            model.load_weights(model_path, by_name=True, exclude=[
+                "mrcnn_class_logits", "mrcnn_bbox_fc",
+                "mrcnn_bbox", "mrcnn_mask"], continue_training=args.continue_training)
+        else:
+            model.load_weights(model_path, by_name=True, continue_training=args.continue_training)
     else:
-        model_path = args.model
-
-    # Load weights
-    print("Loading weights ", model_path)
-    if args.model.lower() == "coco":
-        # Exclude the last layers because they require a matching
-        # number of classes
-        model.load_weights(model_path, by_name=True, exclude=[
-            "mrcnn_class_logits", "mrcnn_bbox_fc",
-            "mrcnn_bbox", "mrcnn_mask"], continue_training=args.continue_training)
-    else:
-        model.load_weights(model_path, by_name=True, continue_training=args.continue_training)
+        print("Training from scratch")
 
     # Train or evaluate
     if args.command == "train":
@@ -757,7 +760,6 @@ if __name__ == '__main__':
                 # ax[1].cla()
                 # fig, ax = plt.subplots(1, 2)
                 # plt.close("all")
-                image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset_train, config, dataset_train.image_ids[0], augmentation=seq)
                 visualize.display_instances(image, bbox, mask, class_ids, dataset_train.class_names, ax=ax[j, i])
                 # ax[1].imshow(image[:, :, 3])
         plt.show()
