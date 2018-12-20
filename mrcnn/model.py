@@ -1089,9 +1089,9 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
 
 def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
                          num_classes, train_bn=True):
-    # ROIAlign returning [batch, num_rois, 4, 4, channels] so that in the end a 4x4 matrix
+    # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
-    x, d = PyramidROIAlign([4, 4], depth_image=depth_image,
+    x, d = PyramidROIAlign([24, 24], depth_image=depth_image,
                         name="roi_align_pose")([rois, image_meta] + feature_maps)
     x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
                               return_depth=True, name="mrcnn_pose_conv1")(x)
@@ -1111,17 +1111,33 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
                            name='mrcnn_pose_bn3')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
+    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), strides=(2, 2), depth_image=d, padding="same"),
                               return_depth=True, name="mrcnn_pose_conv4")(x)
     x = KL.TimeDistributed(BatchNorm(),
                            name='mrcnn_pose_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=(2, 2), activation="relu"),
+                           name="mrcnn_pose_conv5")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_pose_bn5')(x, training=train_bn)
+    shared = KL.Activation('relu')(x)
 
-    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
-                           name="mrcnn_pose_deconv")(x)
-    x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
-                           name="mrcnn_pose")(x)
-    return x
+    # Translation regression
+    trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 6), strides=2, activation="relu"),
+                           name="mrcnn_pose_trans_conva")(shared)
+    trans = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
+                           name="mrcnn_pose_trans_convb")(trans)
+    trans = KL.Lambda(lambda x: K.squeeze(x, 3),
+                       name="trans_squeeze")(trans)
+
+    # Rotation regression
+
+    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=2, activation="relu"),
+                           name="mrcnn_pose_rot_conva")(shared)
+    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
+                               name="mrcnn_pose_rot_convb")(rot)
+
+    return trans, rot
 
 
 ############################################################
