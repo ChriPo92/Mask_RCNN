@@ -36,6 +36,7 @@ import cv2
 import pandas as pd
 import skimage.io
 import skimage.color
+import scipy.io as scio
 import keras.layers as KL
 import keras.backend as KB
 import depth_aware_operations.da_convolution as da_conv
@@ -179,6 +180,35 @@ class YCBVDataset(utils.Dataset):
             image = np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)
         return image
 
+    def load_pose(self, image_id):
+        """
+        Load Instance poses for given image_id
+        :param image_id: internal ID of the image
+        :return:
+        poses: A bool array of shape [4, 4, instance count] with
+            one pose per instance.
+        class_ids: [instance_count] a 1D array of class IDs of the instance masks.
+        """
+        # If not a YCB image, delegate to parent class.
+        image_info = self.image_info[image_id]
+        if image_info["source"] != "YCBV":
+            return super(YCBVDataset, self).load_mask(image_id)
+
+
+        class_ids = []
+        meta_path = self.image_info[image_id]["meta"]
+        meta = scio.loadmat(meta_path)
+        # pose is saved as an [3, 4, N] matrix; needs to be [4, 4, N]
+        poses = meta["poses"]
+        # first repeats [0, 0, 0, 1] N times to create an array of
+        # shape [1, 4, N] and then concatenates it with the first
+        # dimension of the poses matrix to create matrix of shape
+        # [4, 4, N] where the last row is always [0, 0, 0, 1]
+        fin_pose = np.concatenate((meta["poses"],
+                                   np.tile(np.array([[0], [0], [0], [1]]),
+                                           (1, 1, meta["poses"].shape[2]))))
+        class_ids = np.squeeze(meta["cls_indexes"])
+        return fin_pose, class_ids
 
 ########################################################################################################################
 #                                                      Backbone                                                        #
@@ -245,14 +275,14 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
     IMAGE_RESIZE_MODE = "square"#"none" #
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
-
+    FPN_CLASSIF_FC_LAYERS_SIZE = 512
     # TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
@@ -264,7 +294,7 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 203
-    # TRAIN_ROIS_PER_IMAGE = 100
+    TRAIN_ROIS_PER_IMAGE = 70
     USE_DEPTH_AWARE_OPS = False
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
@@ -707,7 +737,7 @@ if __name__ == '__main__':
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
         num += 40
-        layers = "heads"
+        layers = "all"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=num,
@@ -723,8 +753,8 @@ if __name__ == '__main__':
         # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
         #                             ).with_node_names(show_name_regexes=['.*']).build()
         # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
-        prof = tf.profiler.Profiler(graph=KB.get_session().graph)
-        prof.add_step(1, model.run_metadata)
+        # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        # prof.add_step(1, model.run_metadata)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up

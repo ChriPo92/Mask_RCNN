@@ -1089,6 +1089,19 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
 
 def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
                          num_classes, train_bn=True):
+    """Builds the computation graph of the pose estimation head of Feature Pyramid Network.
+
+        rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
+              coordinates.
+        feature_maps: List of feature maps from different layers of the pyramid,
+                      [P2, P3, P4, P5]. Each has a different resolution.
+        image_meta: [batch, (meta data)] Image details. See compose_image_meta()
+        num_classes: number of classes, which determines the depth of the results
+        train_bn: Boolean. Train or freeze Batch Norm layers
+
+        Returns: Trans [[batch, num_rois, 3, 1, NUM_CLASSES],
+                 Rot    [batch, num_rois, 3, 3, NUM_CLASSES]]
+        """
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
     x, d = PyramidROIAlign([24, 24], depth_image=depth_image,
@@ -1111,18 +1124,21 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
                            name='mrcnn_pose_bn3')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
+    # halfes the width and height dimensions to [12, 12]
     x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), strides=(2, 2), depth_image=d, padding="same"),
                               return_depth=True, name="mrcnn_pose_conv4")(x)
     x = KL.TimeDistributed(BatchNorm(),
                            name='mrcnn_pose_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    x = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=(2, 2), activation="relu"),
+    # changes the width and height dimension to [6, 6]
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (3, 3), strides=(2, 2), activation="relu", padding="same"),
                            name="mrcnn_pose_conv5")(x)
     x = KL.TimeDistributed(BatchNorm(),
                            name='mrcnn_pose_bn5')(x, training=train_bn)
     shared = KL.Activation('relu')(x)
 
     # Translation regression
+    # changes [h w] to [3 1]
     trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 6), strides=2, activation="relu"),
                            name="mrcnn_pose_trans_conva")(shared)
     trans = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
@@ -1131,8 +1147,8 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
                        name="trans_squeeze")(trans)
 
     # Rotation regression
-
-    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=2, activation="relu"),
+    # changes [h w] to [3 3]
+    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=1, activation="relu"),
                            name="mrcnn_pose_rot_conva")(shared)
     rot = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
                                name="mrcnn_pose_rot_convb")(rot)
@@ -1286,29 +1302,39 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     """
     # Reshape for simplicity. Merge first two dimensions into one.
     target_class_ids = K.reshape(target_class_ids, (-1,))
-    # target_class_ids = KL.Lambda(lambda y: tf.Print(y, [y], message="target_class_ids: ", summarize=200))(target_class_ids)
-    mask_shape = tf.shape(target_masks)
+    target_class_ids = tf.identity(target_class_ids, name="target_class_ids")
+    # target_class_ids = KL.Lambda(lambda y: tf.Print(y, [y],message="target_class_ids: ", summarize=200))(target_class_ids)
+    # has shape [batch_number, TRAIN_ROIS_PER_IMAGE, MASK_SHAPE[0], MASK_SHAPE[1]]
+    mask_shape = tf.shape(target_masks, name="mask_shape")
     target_masks = K.reshape(target_masks, (-1, mask_shape[2], mask_shape[3]))
+    target_masks = tf.identity(target_masks, name="mrcnn_mask_loss/target_masks")
     # target_masks = KL.Lambda(lambda y: tf.Print(y, [y], message="target_masks: ", summarize=200))(target_masks)
-    pred_shape = tf.shape(pred_masks)
+    # has shape [batch_number, TRAIN_ROIS_PER_IMAGE, MASK_SHAPE[0], MASK_SHAPE[1], Num_Classes]
+    pred_shape = tf.shape(pred_masks, name="pred_shape")
+    # merge batch_number & TRAIN_ROIS_PER_IMAGE
     pred_masks = K.reshape(pred_masks,
                            (-1, pred_shape[2], pred_shape[3], pred_shape[4]))
-    # Permute predicted masks to [N, num_classes, height, width]
-    pred_masks = tf.transpose(pred_masks, [0, 3, 1, 2])
+    pred_masks = tf.identity(pred_masks, name="mrcnn_mask_loss/pred_masks")
+    # Permute predicted masks to [N, num_classes, height, width], N = batch_number * TRAIN_ROIS_PER_IMAGE
+    pred_masks = tf.transpose(pred_masks, [0, 3, 1, 2], name="transpose_pred_masks")
     # pred_masks = KL.Lambda(lambda y: tf.Print(y, [y], message="predmasks: ", summarize=200))(pred_masks)
 
     # Only positive ROIs contribute to the loss. And only
     # the class specific mask of each ROI.
-    positive_ix = tf.where(target_class_ids > 0)[:, 0]
-    # positive_ix = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 1: ", summarize=200))(positive_ix)
+    # 1D list of positve indices (in ascending order I think)
+    positive_ix = tf.where(target_class_ids > 0, name="positive_ix")[:, 0]
+    positive_ix = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="positive_ix: \n", summarize=200))(positive_ix)
+    # ID of the classes corresponding to the positive indices
     positive_class_ids = tf.cast(
-        tf.gather(target_class_ids, positive_ix), tf.int64)
-    indices = tf.stack([positive_ix, positive_class_ids], axis=1)
+        tf.gather(target_class_ids, positive_ix), tf.int64, name="positive_class_ids")
+    positive_class_ids = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="positive_class_ids: \n", summarize=200))(positive_class_ids)
+    indices = tf.stack([positive_ix, positive_class_ids], axis=1, name="indices")
+    indices = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="indices: \n", summarize=200))(indices)
 
     # Gather the masks (predicted and true) that contribute to loss
-    y_true = tf.gather(target_masks, positive_ix)
+    y_true = tf.gather(target_masks, positive_ix, name="y_true")
     # y_true = KL.Lambda(lambda y: tf.Print(y, [y], message="y_true 1: ", summarize=200))(y_true)
-    y_pred = tf.gather_nd(pred_masks, indices)
+    y_pred = tf.gather_nd(pred_masks, indices, name="y_pred")
     # y_pred = KL.Lambda(lambda y: tf.Print(y, [y], message="y_pred 1: ", summarize=200))(y_pred)
 
     # Compute binary cross entropy. If no positive ROIs, then return 0.
@@ -1316,34 +1342,46 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     loss = K.switch(tf.size(y_true) > 0,
                     K.binary_crossentropy(target=y_true, output=y_pred),
                     tf.constant(0.0))
+    loss = tf.identity(loss, name="mrcnn_mask_loss/loss_switch")
     # loss = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 1: ", summarize=200))(loss)
     loss = K.mean(loss)
+    loss = tf.identity(loss, name="mrcnn_mask_loss/loss_mean")
     # loss = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 2: ", summarize=200))(loss)
     return loss
 
 def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_poses):
+    """
+
+    :param target_poses: [batch, num_rois, 4, 4] Translation Matrix
+    :param target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
+    :param pred_poses: [[batch, num_rois, 3, 1, NUM_CLASSES],
+                        [batch, num_rois, 3, 3, NUM_CLASSES]]
+    :return:
+    """
+    pred_trans, pred_rot = pred_poses
     target_class_ids = K.reshape(target_class_ids, (-1,))
     target_poses = K.reshape(target_poses, (-1, 4, 4))
-    pred_shape = tf.shape(pred_poses)
-    pred_poses = K.reshape(pred_poses,
-                           (-1, pred_shape[2], pred_shape[3], pred_shape[4]))
-    # Permute predicted masks to [N, num_classes, height, width]
-    pred_poses = tf.transpose(pred_poses, [0, 3, 1, 2])
+    # TODO: check if this has shape [N, 3, 1] or [N, 3]; We need the later
+    target_trans = target_poses[:, 3, 0:3] # shape: [batch * num_rois, 3]
+    target_rot = target_poses[:, 0:3, 0:3] # shape: [batch * num_rois, 3, 3]
+    num_classes = tf.shape(pred_trans)[4]
+    pred_trans = K.reshape(pred_trans, (-1, 3, num_classes)) # shape: [batch * num_rois, 3, num_classes]
+    pred_rot = K.reshape(pred_rot, (-1, 3, 3, num_classes)) #  shape: [batch * num_rois, 3, 3, num_classes]
+    # Permute predicted tensors to [N, num_classes, ...]
+    pred_trans = tf.transpose(pred_trans, [0, 2, 1]) # shape: [batch * num_rois, num_classes, 3]
+    pred_rot = tf.transpose(pred_rot, [0, 3, 1, 2]) # shape: [batch *  num_rois, num_classes, 3, 3]
     positive_ix = tf.where(target_class_ids > 0)[:, 0]
     positive_class_ids = tf.cast(
         tf.gather(target_class_ids, positive_ix), tf.int64)
     indices = tf.stack([positive_ix, positive_class_ids], axis=1)
 
     # Gather the masks (predicted and true) that contribute to loss
-    y_true = tf.gather(target_poses, positive_ix)
-    y_pred = tf.gather_nd(pred_poses, indices)
+    y_true_t = tf.gather(target_trans, positive_ix) # shape: [pos_ix, 3]
+    y_true_r = tf.gather(target_rot, positive_ix)   # shape: [pos_ix, 3, 3]
+    y_pred_t = tf.gather_nd(pred_trans, indices)    # shape: [pos_ix, 3]
+    y_pred_r = tf.gather_nd(pred_rot, indices)      # shape: [pos_ix, 3, 3]
 
-    # Nearest Neighbor calculation using L1 Distance
-    # https://github.com/aymericdamien/TensorFlow-Examples/blob/master/examples/2_BasicModels/nearest_neighbor.py
-    # Calculate L1 Distance
-    distance = tf.reduce_sum(tf.abs(tf.add(xtr, tf.negative(xte))), reduction_indices=1)
-    # Prediction: Get min distance index (Nearest neighbor)
-    pred = tf.arg_min(distance, 0)
+
 
     loss = K.switch(tf.size(y_true) > 0,
                     K.binary_crossentropy(target=y_true, output=y_pred),
