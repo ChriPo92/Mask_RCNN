@@ -211,7 +211,7 @@ class Config(object):
     GRADIENT_CLIP_NORM = 5.0
 
     # enable training of 6D Pose estimation
-    OUTPUT_6D_POSE = False
+    ESTIMATE_6D_POSE = False
 
     # use depth-aware operation
     USE_DEPTH_AWARE_OPS = False

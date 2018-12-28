@@ -565,7 +565,7 @@ def overlaps_graph(boxes1, boxes2):
     return overlaps
 
 
-def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config):
+def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_poses, config):
     """Generates detection targets for one image. Subsamples proposals and
     generates target class IDs, bounding box deltas, and masks for each.
 
@@ -575,6 +575,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     gt_class_ids: [MAX_GT_INSTANCES] int class IDs
     gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
     gt_masks: [height, width, MAX_GT_INSTANCES] of boolean type.
+    gt_poses: [4, 4, MAX_GT_INSTANCES] or None if config.ESTIMATE_6D_POSE is False
 
     Returns: Target ROIs and corresponding class IDs, bounding box shifts,
     and masks.
@@ -583,10 +584,14 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     deltas: [TRAIN_ROIS_PER_IMAGE, (dy, dx, log(dh), log(dw))]
     masks: [TRAIN_ROIS_PER_IMAGE, height, width]. Masks cropped to bbox
            boundaries and resized to neural network output size.
-
+    poses: ONLY RETURNED IF config.ESTIMATE_6D_POSE is True
+           [TRAIN_ROIS_PER_IMAGE, 4, 4] GT Poses corresponding to
+           the masks
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
     # Assertions
+    if not config.ESTIMATE_6D_POSE:
+        assert gt_poses is None
     asserts = [
         tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals],
                   name="roi_assertion"),
@@ -612,6 +617,8 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     gt_class_ids = tf.gather(gt_class_ids, non_crowd_ix)
     gt_boxes = tf.gather(gt_boxes, non_crowd_ix)
     gt_masks = tf.gather(gt_masks, non_crowd_ix, axis=2)
+    if config.ESTIMATE_6D_POSE:
+        gt_poses = tf.gather(gt_poses, non_crowd_ix, axis=2)
 
     # Compute overlaps matrix [proposals, gt_boxes]
     overlaps = overlaps_graph(proposals, gt_boxes)
@@ -662,6 +669,10 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     transposed_masks = tf.expand_dims(tf.transpose(gt_masks, [2, 0, 1]), -1)
     # Pick the right mask for each ROI
     roi_masks = tf.gather(transposed_masks, roi_gt_box_assignment)
+    if config.ESTIMATE_6D_POSE:
+        transposed_poses = tf.expand_dims(tf.transpose(gt_poses, [2, 0, 1]), -1)
+        roi_poses = tf.gather(transposed_poses, roi_gt_box_assignment)
+        poses = tf.squeeze(roi_poses, axis=3)
 
     # Compute mask targets
     boxes = positive_rois
@@ -698,8 +709,11 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     roi_gt_class_ids = tf.pad(roi_gt_class_ids, [(0, N + P)])
     deltas = tf.pad(deltas, [(0, N + P), (0, 0)])
     masks = tf.pad(masks, [[0, N + P], (0, 0), (0, 0)])
-
-    return rois, roi_gt_class_ids, deltas, masks
+    if config.ESTIMATE_6D_POSE:
+        poses = tf.pad(poses, [[0, N + P], (0, 0), (0, 0)])
+        return rois, roi_gt_class_ids, deltas, masks, poses
+    else:
+        return rois, roi_gt_class_ids, deltas, masks
 
 
 class DetectionTargetLayer(KE.Layer):
@@ -736,28 +750,45 @@ class DetectionTargetLayer(KE.Layer):
         gt_class_ids = inputs[1]
         gt_boxes = inputs[2]
         gt_masks = inputs[3]
+        if self.config.ESTIMATE_6D_POSE:
+            gt_poses = inputs[4]
+        else:
+            gt_poses = None
 
         # Slice the batch and run a graph for each slice
         # TODO: Rename target_bbox to target_deltas for clarity
         names = ["rois", "target_class_ids", "target_bbox", "target_mask"]
         outputs = utils.batch_slice(
-            [proposals, gt_class_ids, gt_boxes, gt_masks],
-            lambda w, x, y, z: detection_targets_graph(
-                w, x, y, z, self.config),
+            [proposals, gt_class_ids, gt_boxes, gt_masks, gt_poses],
+            lambda v, w, x, y, z: detection_targets_graph(
+                v, w, x, y, z, self.config),
             self.config.IMAGES_PER_GPU, names=names)
         return outputs
 
     def compute_output_shape(self, input_shape):
-        return [
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
-            (None, self.config.TRAIN_ROIS_PER_IMAGE),  # class_ids
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # deltas
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0],
-             self.config.MASK_SHAPE[1])  # masks
-        ]
+        if not self.config.ESTIMATE_6D_POSE:
+            return [
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
+                (None, self.config.TRAIN_ROIS_PER_IMAGE),  # class_ids
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # deltas
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0],
+                 self.config.MASK_SHAPE[1])  # masks
+            ]
+        else:
+            return [
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
+                (None, self.config.TRAIN_ROIS_PER_IMAGE),  # class_ids
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # deltas
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0],
+                 self.config.MASK_SHAPE[1]),  # masks
+                (None, self.config.TRAIN_ROIS_PER_IMAGE, 4, 4) # poses
+            ]
 
     def compute_mask(self, inputs, mask=None):
-        return [None, None, None, None]
+        if not self.config.ESTIMATE_6D_POSE:
+            return [None, None, None, None]
+        else:
+            return [None, None, None, None, None]
 
 
 ############################################################
@@ -1349,13 +1380,16 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     # loss = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 2: ", summarize=200))(loss)
     return loss
 
-def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_poses):
+def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_poses, xyz_models):
     """
 
     :param target_poses: [batch, num_rois, 4, 4] Translation Matrix
     :param target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
     :param pred_poses: [[batch, num_rois, 3, 1, NUM_CLASSES],
                         [batch, num_rois, 3, 3, NUM_CLASSES]]
+    :param xyz_models: [NUM_CLASSES, N, 3] point cloud models of the
+                        different classes, where N is the number of points
+                        in the model
     :return:
     """
     pred_trans, pred_rot = pred_poses
@@ -1380,11 +1414,11 @@ def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_poses):
     y_true_r = tf.gather(target_rot, positive_ix)   # shape: [pos_ix, 3, 3]
     y_pred_t = tf.gather_nd(pred_trans, indices)    # shape: [pos_ix, 3]
     y_pred_r = tf.gather_nd(pred_rot, indices)      # shape: [pos_ix, 3, 3]
+    pos_xyz_models = tf.gather(xyz_models, positive_class_ids) # [pos_ix, N, 3]
 
 
-
-    loss = K.switch(tf.size(y_true) > 0,
-                    K.binary_crossentropy(target=y_true, output=y_pred),
+    loss = K.switch(tf.size(y_true_r) > 0,
+                    chamfer_distance_loss(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models),
                     tf.constant(0.0))
     loss = K.mean(loss)
     return loss
@@ -1416,10 +1450,19 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     mask: [height, width, instance_count]. The height and width are those
         of the image unless use_mini_mask is True, in which case they are
         defined in MINI_MASK_SHAPE.
+    pose: [4, 4, instance_count]. Translation Matrix of each instance in
+        the image
     """
     # Load image and mask
     image = dataset.load_image(image_id)
     mask, class_ids = dataset.load_mask(image_id)
+    pose, pclass_ids = dataset.load_pose(image_id)
+    if config.ESTIMATE_6D_POSE:
+        sort_ids = np.argsort(pclass_ids)
+        pclass_ids = pclass_ids[sort_ids]
+        pose = pose[sort_ids]
+        # TODO: this works only for single instances of objects; make it work for multiple instances
+        assert np.array_equal(pclass_ids, class_ids)
     original_shape = image.shape
     image, window, scale, padding, crop = utils.resize_image(
         image,
@@ -1439,6 +1482,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
 
     # Augmentation
     # This requires the imgaug lib (https://github.com/aleju/imgaug)
+    # TODO: Add Augmentation for poses
     if augmentation:
         import imgaug
 
@@ -1483,6 +1527,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     _idx = np.sum(mask, axis=(0, 1)) > 0
     mask = mask[:, :, _idx]
     class_ids = class_ids[_idx]
+    pose = pose[:, :, _idx]
     # Bounding boxes. Note that some boxes might be all zeros
     # if the corresponding mask got cropped out.
     # bbox: [num_instances, (y1, x1, y2, x2)]
@@ -1503,10 +1548,10 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     image_meta = compose_image_meta(image_id, original_shape, image.shape,
                                     window, scale, active_class_ids)
 
-    return image, image_meta, class_ids, bbox, mask
+    return image, image_meta, class_ids, bbox, mask, pose
 
 
-def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
+def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, gt_pose, config):
     """Generate targets for training Stage 2 classifier and mask heads.
     This is not used in normal training. It's useful for debugging or to train
     the Mask RCNN heads without using the RPN head.
@@ -1517,6 +1562,8 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
     gt_boxes: [instance count, (y1, x1, y2, x2)]
     gt_masks: [height, width, instance count] Ground truth masks. Can be full
               size or mini-masks.
+    gt_pose: [4, 4, instance count] ground truth poses, should be corresponding
+              to the masks
 
     Returns:
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)]
@@ -1525,6 +1572,7 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
             bbox refinements.
     masks: [TRAIN_ROIS_PER_IMAGE, height, width, NUM_CLASSES). Class specific masks cropped
            to bbox boundaries and resized to neural network output size.
+    poses: [TRAIN_ROIS_PER_IMAGE, 4, 4, NUM_CLASSES]. Class-specific poses of the instances
     """
     assert rpn_rois.shape[0] > 0
     assert gt_class_ids.dtype == np.int32, "Expected int but got {}".format(
@@ -1543,6 +1591,7 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
     gt_class_ids = gt_class_ids[instance_ids]
     gt_boxes = gt_boxes[instance_ids]
     gt_masks = gt_masks[:, :, instance_ids]
+    gt_poses = gt_pose[:, :, instance_ids]
 
     # Compute areas of ROIs and ground truth boxes.
     rpn_roi_area = (rpn_rois[:, 2] - rpn_rois[:, 0]) * \
@@ -1634,11 +1683,14 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
     # Generate class-specific target masks
     masks = np.zeros((config.TRAIN_ROIS_PER_IMAGE, config.MASK_SHAPE[0], config.MASK_SHAPE[1], config.NUM_CLASSES),
                      dtype=np.float32)
+    poses = np.zeros((config.TRAIN_ROIS_PER_IMAGE, 4, 4, config.NUM_CLASSES),
+                     dtype=np.float32)
     for i in pos_ids:
         class_id = roi_gt_class_ids[i]
         assert class_id > 0, "class id must be greater than 0"
         gt_id = roi_gt_assignment[i]
         class_mask = gt_masks[:, :, gt_id]
+        class_pose = gt_poses[:, :, gt_id]
 
         if config.USE_MINI_MASK:
             # Create a mask placeholder, the size of the image
@@ -1658,8 +1710,9 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
         m = class_mask[y1:y2, x1:x2]
         mask = utils.resize(m, config.MASK_SHAPE)
         masks[i, :, :, class_id] = mask
+        poses[i, :, :, class_id] = class_pose
 
-    return rois, roi_gt_class_ids, bboxes, masks
+    return rois, roi_gt_class_ids, bboxes, masks, poses
 
 
 def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
@@ -1885,10 +1938,12 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
     - gt_masks: [batch, height, width, MAX_GT_INSTANCES]. The height and width
                 are those of the image unless use_mini_mask is True, in which
                 case they are defined in MINI_MASK_SHAPE.
+    - gt_poses: [batch, 4, 4, MAX_GT_INSTANCES]: Ground Truth poses for each
+                instance, corresponding to the masks
 
     outputs list: Usually empty in regular training. But if detection_targets
         is True then the outputs list contains target class_ids, bbox deltas,
-        and masks.
+        masks and poses.
     """
     b = 0  # batch item index
     image_index = -1
@@ -1918,12 +1973,12 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
 
             # If the image source is not to be augmented pass None as augmentation
             if dataset.image_info[image_id]['source'] in no_augmentation_sources:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_pose = \
                     load_image_gt(dataset, config, image_id, augment=augment,
                                   augmentation=None,
                                   use_mini_mask=config.USE_MINI_MASK)
             else:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_pose = \
                     load_image_gt(dataset, config, image_id, augment=augment,
                                   augmentation=augmentation,
                                   use_mini_mask=config.USE_MINI_MASK)
@@ -1942,9 +1997,9 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 rpn_rois = generate_random_rois(
                     image.shape, random_rois, gt_class_ids, gt_boxes)
                 if detection_targets:
-                    rois, mrcnn_class_ids, mrcnn_bbox, mrcnn_mask = \
+                    rois, mrcnn_class_ids, mrcnn_bbox, mrcnn_mask, mrcnn_pose = \
                         build_detection_targets(
-                            rpn_rois, gt_class_ids, gt_boxes, gt_masks, config)
+                            rpn_rois, gt_class_ids, gt_boxes, gt_masks, gt_pose, config)
 
             # Init batch arrays
             if b == 0:
@@ -1972,6 +2027,9 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 batch_gt_masks = np.zeros(
                     (batch_size, gt_masks.shape[0], gt_masks.shape[1],
                      config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
+                batch_gt_poses = np.zeros(
+                    (batch_size, gt_pose.shape[0], gt_pose.shape[1],
+                     config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
                 if random_rois:
                     batch_rpn_rois = np.zeros(
                         (batch_size, rpn_rois.shape[0], 4), dtype=rpn_rois.dtype)
@@ -1984,6 +2042,8 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                             (batch_size,) + mrcnn_bbox.shape, dtype=mrcnn_bbox.dtype)
                         batch_mrcnn_mask = np.zeros(
                             (batch_size,) + mrcnn_mask.shape, dtype=mrcnn_mask.dtype)
+                        batch_mrcnn_pose = np.zeros(
+                            (batch_size,) + mrcnn_pose.shape, dtype=mrcnn_pose.dtype)
 
             # If more instances than fits in the array, sub-sample from them.
             if gt_boxes.shape[0] > config.MAX_GT_INSTANCES:
@@ -1992,6 +2052,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 gt_class_ids = gt_class_ids[ids]
                 gt_boxes = gt_boxes[ids]
                 gt_masks = gt_masks[:, :, ids]
+                gt_pose = gt_pose[:, :, ids]
 
             # Add to batch
             batch_image_meta[b] = image_meta
@@ -2007,6 +2068,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
             batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
             batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
+            batch_gt_poses[b, :, :, :gt_pose.shape[-1]] = gt_pose
             if random_rois:
                 batch_rpn_rois[b] = rpn_rois
                 if detection_targets:
@@ -2014,6 +2076,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                     batch_mrcnn_class_ids[b] = mrcnn_class_ids
                     batch_mrcnn_bbox[b] = mrcnn_bbox
                     batch_mrcnn_mask[b] = mrcnn_mask
+                    batch_mrcnn_pose[b] = mrcnn_pose
             b += 1
 
             # Batch full?
@@ -2024,6 +2087,8 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 else:
                     inputs = [batch_images, batch_depth_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
                               batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
+                if config.ESTIMATE_6D_POSE:
+                    inputs.extend([batch_gt_poses])
                 outputs = []
 
                 if random_rois:
@@ -2034,7 +2099,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                         batch_mrcnn_class_ids = np.expand_dims(
                             batch_mrcnn_class_ids, -1)
                         outputs.extend(
-                            [batch_mrcnn_class_ids, batch_mrcnn_bbox, batch_mrcnn_mask])
+                            [batch_mrcnn_class_ids, batch_mrcnn_bbox, batch_mrcnn_mask, batch_mrcnn_pose])
 
                 yield inputs, outputs
 
@@ -2082,6 +2147,9 @@ class MaskRCNN():
                 outputs of the model differ accordingly.
         """
         assert mode in ['training', 'inference']
+        if config.ESTIMATE_6D_POSE:
+            # for now the pose estimation graph is built dependent on the depth image
+            assert config.USE_DEPTH_AWARE_OPS
         # Image size must be dividable by 2 multiple times
         h, w = config.IMAGE_SHAPE[:2]
         if h / 2 ** 6 != int(h / 2 ** 6) or w / 2 ** 6 != int(w / 2 ** 6):
@@ -2127,6 +2195,11 @@ class MaskRCNN():
                 input_gt_masks = KL.Input(
                     shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
                     name="input_gt_masks", dtype=bool)
+            # 4. GT Poses as 4x4 Translation Matrices
+            # [batch, 4, 4, MAX_GT_INSTANCES]
+            if config.ESTIMATE_6D_POSE:
+                input_gt_poses = KL.Input(shape=[4, 4, None], name="input_gt_poses",
+                                         dtype=tf.float32)
         elif mode == "inference":
             # Anchors in normalized coordinates
             input_anchors = KL.Input(shape=[None, 4], name="input_anchors")
@@ -2233,9 +2306,14 @@ class MaskRCNN():
             # Subsamples proposals and generates target outputs for training
             # Note that proposal class IDs, gt_boxes, and gt_masks are zero
             # padded. Equally, returned rois and targets are zero padded.
-            rois, target_class_ids, target_bbox, target_mask = \
-                DetectionTargetLayer(config, name="proposal_targets")([
-                    target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
+            if not config.ESTIMATE_6D_POSE:
+                rois, target_class_ids, target_bbox, target_mask = \
+                    DetectionTargetLayer(config, name="proposal_targets")([
+                        target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
+            else:
+                rois, target_class_ids, target_bbox, target_mask, target_pose = \
+                    DetectionTargetLayer(config, name="proposal_targets")([
+                        target_rois, input_gt_class_ids, gt_boxes, input_gt_masks, input_gt_poses])
 
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
@@ -2250,6 +2328,10 @@ class MaskRCNN():
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
+            if config.ESTIMATE_6D_POSE:
+                mrcnn_pose = build_fpn_pose_graph(rois, mrcnn_feature_maps,
+                                                  input_depth, input_image_meta,
+                                                  config.NUM_CLASSES, config.TRAIN_BN)
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -2265,10 +2347,16 @@ class MaskRCNN():
                 [target_bbox, target_class_ids, mrcnn_bbox])
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
+            if config.ESTIMATE_6D_POSE:
+                pose_loss = KL.Lambda(lambda x: mrcnn_pose_loss_graph(*x), name="mrcnn_pose_loss")(
+                    [target_pose, target_class_ids, mrcnn_pose]
+                )
 
             # Model
             inputs = [input_image, input_image_meta,
                       input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
+            if config.ESTIMATE_6D_POSE:
+                inputs.append(input_gt_poses)
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
             if config.USE_DEPTH_AWARE_OPS:
@@ -2277,6 +2365,8 @@ class MaskRCNN():
                        mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
                        rpn_rois, output_rois,
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
+            if config.ESTIMATE_6D_POSE:
+                outputs.extend([mrcnn_pose, pose_loss])
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
             # Network Heads
@@ -2300,12 +2390,19 @@ class MaskRCNN():
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
+            if config.ESTIMATE_6D_POSE:
+                mrcnn_pose = build_fpn_pose_graph(detection_boxes, mrcnn_feature_maps,
+                                                  input_depth, input_image_meta,
+                                                  config.NUM_CLASSES, config.TRAIN_BN)
             inputs = [input_image, input_image_meta, input_anchors]
+            outputs = [detections, mrcnn_class, mrcnn_bbox,
+                       mrcnn_mask, rpn_rois, rpn_class, rpn_bbox]
             if config.USE_DEPTH_AWARE_OPS:
                 inputs.insert(1, input_depth)
+            if config.ESTIMATE_6D_POSE:
+                outputs.append(mrcnn_pose)
             model = KM.Model(inputs,
-                             [detections, mrcnn_class, mrcnn_bbox,
-                              mrcnn_mask, rpn_rois, rpn_class, rpn_bbox],
+                             outputs,
                              name='mask_rcnn')
 
         # Add multi-GPU support.
@@ -2418,6 +2515,8 @@ class MaskRCNN():
         loss_names = [
             "rpn_class_loss", "rpn_bbox_loss",
             "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
+        if self.config.ESTIMATE_6D_POSE:
+            loss_names.append("mrcnn_pose_loss")
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:

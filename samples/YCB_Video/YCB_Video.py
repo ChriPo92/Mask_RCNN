@@ -77,7 +77,8 @@ def load_id_classes_dict(path):
         for i, line in enumerate(f):
             ycb_id = int(line[:3])
             name = line[4:-1]
-            id_class[i] = {"ycb_id": ycb_id, "name": name}
+            # 0 is background
+            id_class[i+1] = {"ycb_id": ycb_id, "name": name}
     return id_class
 
 def load_image_ids(path):
@@ -91,7 +92,6 @@ def load_image_ids(path):
 ########################################################################################################################
 #                                                        Dataset                                                       #
 ########################################################################################################################
-
 class YCBVDataset(utils.Dataset):
     def load_ycbv(self, dataset_dir, subset, class_ids=None, use_annotation="label", use_rgbd=False):
         """Load a subset of the COCO dataset.
@@ -155,7 +155,7 @@ class YCBVDataset(utils.Dataset):
         annotation_path = self.image_info[image_id]["annotations"]
         # labels are saved in an image, as a mask of all objects, where each objects
         # mask consists of its corresponding class_id
-        ann = cv2.imread(annotation_path, 0)
+        ann = skimage.io.imread(annotation_path, 0)
         classes = np.unique(ann)[1:] # drop the zero (background)
         masks = []
         class_ids = []
@@ -195,7 +195,6 @@ class YCBVDataset(utils.Dataset):
             return super(YCBVDataset, self).load_mask(image_id)
 
 
-        class_ids = []
         meta_path = self.image_info[image_id]["meta"]
         meta = scio.loadmat(meta_path)
         # pose is saved as an [3, 4, N] matrix; needs to be [4, 4, N]
@@ -208,6 +207,9 @@ class YCBVDataset(utils.Dataset):
                                    np.tile(np.array([[0], [0], [0], [1]]),
                                            (1, 1, meta["poses"].shape[2]))))
         class_ids = np.squeeze(meta["cls_indexes"])
+        # IMPORTANT: The indices and poses are not yet in the same order as the masks.
+        # This is however important later on, so something needs to be done to achieve
+        # this. For now this is handled by load image gt
         return fin_pose, class_ids
 
 ########################################################################################################################
@@ -304,6 +306,7 @@ class YCBVConfig(Config):
     #     [[int(math.ceil(image_shape[0] / stride)),
     #       int(math.ceil(image_shape[1] / stride))]
     #      for stride in config.BACKBONE_STRIDES])
+    MAX_GT_INSTANCES = 50 # was 100, but normally there should never be more than 100 GT Instances in on picture
 
 ########################################################################################################################
 #                                               Image Augmentation                                                     #
