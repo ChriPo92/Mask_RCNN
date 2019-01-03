@@ -299,6 +299,8 @@ class YCBVConfig(Config):
     TRAIN_ROIS_PER_IMAGE = 70
     USE_DEPTH_AWARE_OPS = False
 
+    ESTIMATE_6D_POSE = True
+    XYZ_MODEL_PATH = "/home/christoph/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
     # BACKBONE = da_resnet_graph
@@ -724,8 +726,8 @@ if __name__ == '__main__':
         # Right/Left flip 50% of the time
         # TODO: if image is flipped, the 6d Pose changes --> make amends
         # TODO: check if image augmentation works for rgbd images as well, then create more sophisticated augmentation
-        augmentation = ia.augmenters.Fliplr(0.5)
-        # augmentation = None
+        # augmentation = ia.augmenters.Fliplr(0.5)
+        augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         num = 0
@@ -740,7 +742,7 @@ if __name__ == '__main__':
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
         num += 40
-        layers = "all"
+        layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=num,

@@ -13,9 +13,9 @@ import datetime
 import re
 import math
 import logging
-from collections import OrderedDict
 import multiprocessing
 import numpy as np
+import pickle as pkl
 import tensorflow as tf
 import keras
 import keras.backend as K
@@ -29,9 +29,11 @@ DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
 
 from mrcnn import utils
+from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
+from collections import OrderedDict
 
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
@@ -109,13 +111,13 @@ def convolution_layer(input, filters, kernel_size, depth_image=None, strides=(1,
 
     else:
         # print("da_conv")
-        image, depth = DCKL.DAConv2D(filters, kernel_size, depth_image=depth_image, strides=strides, padding=padding,
+        image, depth = DCKL.DAConv2D(filters, kernel_size, strides=strides, padding=padding,
                           data_format=data_format, dilation_rate=dilation_rate, activation=activation,
                           use_bias=use_bias, kernel_initializer=kernel_initializer, bias_initializer=bias_initializer,
                           kernel_regularizer=kernel_regularizer, bias_regularizer=bias_regularizer,
                           activity_regularizer=activity_regularizer, kernel_constraint=kernel_constraint,
                           bias_constraint=bias_constraint, return_depth=True, similarity_factor=sim_factor,
-                                     **kwargs)(input)
+                                     **kwargs)([input, depth_image])
         return image, depth
 
 def pooling_layer(input_image, pool_size, strides, padding="same", depth_image=None):
@@ -522,7 +524,7 @@ class PyramidROIAlign(KE.Layer):
             pooled_depth = tf.gather(pooled_depth, ix)
             shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled_depth)[1:]], axis=0)
             pooled_depth = tf.reshape(pooled_depth, shape)
-            return pooled, pooled_depth
+            return [pooled, pooled_depth]
         return pooled
 
     def compute_output_shape(self, input_shape):
@@ -753,11 +755,11 @@ class DetectionTargetLayer(KE.Layer):
         if self.config.ESTIMATE_6D_POSE:
             gt_poses = inputs[4]
         else:
-            gt_poses = None
+            gt_poses = [None for i in range(self.config.BATCH_SIZE)]
 
         # Slice the batch and run a graph for each slice
         # TODO: Rename target_bbox to target_deltas for clarity
-        names = ["rois", "target_class_ids", "target_bbox", "target_mask"]
+        names = ["rois", "target_class_ids", "target_bbox", "target_mask", "target_pose"]
         outputs = utils.batch_slice(
             [proposals, gt_class_ids, gt_boxes, gt_masks, gt_poses],
             lambda v, w, x, y, z: detection_targets_graph(
@@ -1135,38 +1137,50 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
         """
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
+    def time_distributed_da_conv_model(channels, kernel_size, padding, strides=(1, 1)):
+        """
+        keras.layers.TimeDistributed can only handle layers that have one input and one output
+        tensor. To be able to use the DA Convolutions, the depth has to be concatenated to the
+        image and then split before the op and re-concatenated afterwards. This is handled by
+        a keras model.
+
+        :param channels: channels of the output feature map
+        :param kernel_size: size of the convolutional kernel
+        :param padding: padding used in the convolutions
+        :param strides: strides of the convolution kernel
+        :return: keras Model
+        """
+        merged_input = KL.Input([24, 24, 257], name="merged_input")
+        o_x, o_d = DCKL.DAConv2D(
+            channels, kernel_size, padding=padding, strides=strides, return_depth=True
+        )(
+            KL.Lambda(
+                lambda x: [x[:, :, :, :-1], tf.expand_dims(x[:, :, :, -1], axis=-1)]
+            )(merged_input)
+        )
+        o_x = BatchNorm()(o_x, training=train_bn)
+        o_x = KL.Activation("relu")(o_x)
+        merged_output = KL.merge.concatenate([o_x, o_d], axis=-1)
+        merged_model = KE.Model(input=merged_input, output=merged_output)
+        return merged_model
+
     x, d = PyramidROIAlign([24, 24], depth_image=depth_image,
                         name="roi_align_pose")([rois, image_meta] + feature_maps)
-    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
-                              return_depth=True, name="mrcnn_pose_conv1")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn1')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-
-    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
-                              return_depth=True, name="mrcnn_pose_conv2")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn2')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-
-    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), depth_image=d, padding="same"),
-                              return_depth=True, name="mrcnn_pose_conv3")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn3')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-
-    # halfes the width and height dimensions to [12, 12]
-    x, d = KL.TimeDistributed(DCKL.DAConv2D(256, (3, 3), strides=(2, 2), depth_image=d, padding="same"),
-                              return_depth=True, name="mrcnn_pose_conv4")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn4')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # changes the width and height dimension to [6, 6]
-    x = KL.TimeDistributed(KL.Conv2D(num_classes, (3, 3), strides=(2, 2), activation="relu", padding="same"),
-                           name="mrcnn_pose_conv5")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn5')(x, training=train_bn)
-    shared = KL.Activation('relu')(x)
+    # merge image and depth, so that x = x_d[:, :, :, :, :-1] & d = x_d[:, :, :, :, -1]
+    x_d = KL.merge.concatenate([x, d])
+    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+                             name="mrcnn_pose_conv1")(x_d)
+    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+                             name="mrcnn_pose_conv2")(x_d)
+    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+                             name="mrcnn_pose_conv3")(x_d)
+    # halfes the width and height dimensions to [12, 12] --> [Batch, num_rois, 12, 12, 256]
+    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same", (2, 2)),
+                             name="mrcnn_pose_conv4")(x_d)
+    # changes the width and height dimension to [6, 6] --> [Batch, num_rois, 6, 6, num_classes]
+    x_d = KL.TimeDistributed(time_distributed_da_conv_model(num_classes, (3, 3), "same", (2, 2)),
+                             name="mrcnn_pose_conv5")(x_d)
+    shared = KL.Lambda(lambda y: y[:, :, :, :, :-1])(x_d) # discard the depth map
 
     # Translation regression
     # changes [h w] to [3 1]
@@ -1175,7 +1189,7 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
     trans = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
                            name="mrcnn_pose_trans_convb")(trans)
     trans = KL.Lambda(lambda x: K.squeeze(x, 3),
-                       name="trans_squeeze")(trans)
+                       name="mrcnn_pose_trans_squeeze")(trans)
 
     # Rotation regression
     # changes [h w] to [3 3]
@@ -1354,13 +1368,13 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     # the class specific mask of each ROI.
     # 1D list of positve indices (in ascending order I think)
     positive_ix = tf.where(target_class_ids > 0, name="positive_ix")[:, 0]
-    positive_ix = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="positive_ix: \n", summarize=200))(positive_ix)
+    # positive_ix = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="positive_ix: \n", summarize=200))(positive_ix)
     # ID of the classes corresponding to the positive indices
     positive_class_ids = tf.cast(
         tf.gather(target_class_ids, positive_ix), tf.int64, name="positive_class_ids")
-    positive_class_ids = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="positive_class_ids: \n", summarize=200))(positive_class_ids)
+    # positive_class_ids = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="positive_class_ids: \n", summarize=200))(positive_class_ids)
     indices = tf.stack([positive_ix, positive_class_ids], axis=1, name="indices")
-    indices = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="indices: \n", summarize=200))(indices)
+    # indices = KL.Lambda(lambda y: tf.Print(y, [y, tf.shape(y)], message="indices: \n", summarize=200))(indices)
 
     # Gather the masks (predicted and true) that contribute to loss
     y_true = tf.gather(target_masks, positive_ix, name="y_true")
@@ -1373,55 +1387,14 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     loss = K.switch(tf.size(y_true) > 0,
                     K.binary_crossentropy(target=y_true, output=y_pred),
                     tf.constant(0.0))
-    loss = tf.identity(loss, name="mrcnn_mask_loss/loss_switch")
+    # loss = tf.identity(loss, name="mrcnn_mask_loss/loss_switch")
     # loss = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 1: ", summarize=200))(loss)
     loss = K.mean(loss)
-    loss = tf.identity(loss, name="mrcnn_mask_loss/loss_mean")
+    # loss = tf.identity(loss, name="mrcnn_mask_loss/loss_mean")
     # loss = KL.Lambda(lambda y: tf.Print(y, [y], message="loss 2: ", summarize=200))(loss)
     return loss
 
-def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_poses, xyz_models):
-    """
 
-    :param target_poses: [batch, num_rois, 4, 4] Translation Matrix
-    :param target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
-    :param pred_poses: [[batch, num_rois, 3, 1, NUM_CLASSES],
-                        [batch, num_rois, 3, 3, NUM_CLASSES]]
-    :param xyz_models: [NUM_CLASSES, N, 3] point cloud models of the
-                        different classes, where N is the number of points
-                        in the model
-    :return:
-    """
-    pred_trans, pred_rot = pred_poses
-    target_class_ids = K.reshape(target_class_ids, (-1,))
-    target_poses = K.reshape(target_poses, (-1, 4, 4))
-    # TODO: check if this has shape [N, 3, 1] or [N, 3]; We need the later
-    target_trans = target_poses[:, 3, 0:3] # shape: [batch * num_rois, 3]
-    target_rot = target_poses[:, 0:3, 0:3] # shape: [batch * num_rois, 3, 3]
-    num_classes = tf.shape(pred_trans)[4]
-    pred_trans = K.reshape(pred_trans, (-1, 3, num_classes)) # shape: [batch * num_rois, 3, num_classes]
-    pred_rot = K.reshape(pred_rot, (-1, 3, 3, num_classes)) #  shape: [batch * num_rois, 3, 3, num_classes]
-    # Permute predicted tensors to [N, num_classes, ...]
-    pred_trans = tf.transpose(pred_trans, [0, 2, 1]) # shape: [batch * num_rois, num_classes, 3]
-    pred_rot = tf.transpose(pred_rot, [0, 3, 1, 2]) # shape: [batch *  num_rois, num_classes, 3, 3]
-    positive_ix = tf.where(target_class_ids > 0)[:, 0]
-    positive_class_ids = tf.cast(
-        tf.gather(target_class_ids, positive_ix), tf.int64)
-    indices = tf.stack([positive_ix, positive_class_ids], axis=1)
-
-    # Gather the masks (predicted and true) that contribute to loss
-    y_true_t = tf.gather(target_trans, positive_ix) # shape: [pos_ix, 3]
-    y_true_r = tf.gather(target_rot, positive_ix)   # shape: [pos_ix, 3, 3]
-    y_pred_t = tf.gather_nd(pred_trans, indices)    # shape: [pos_ix, 3]
-    y_pred_r = tf.gather_nd(pred_rot, indices)      # shape: [pos_ix, 3, 3]
-    pos_xyz_models = tf.gather(xyz_models, positive_class_ids) # [pos_ix, N, 3]
-
-
-    loss = K.switch(tf.size(y_true_r) > 0,
-                    chamfer_distance_loss(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models),
-                    tf.constant(0.0))
-    loss = K.mean(loss)
-    return loss
 
 ############################################################
 #  Data Generator
@@ -1458,9 +1431,10 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     mask, class_ids = dataset.load_mask(image_id)
     pose, pclass_ids = dataset.load_pose(image_id)
     if config.ESTIMATE_6D_POSE:
+        assert augmentation is None
         sort_ids = np.argsort(pclass_ids)
         pclass_ids = pclass_ids[sort_ids]
-        pose = pose[sort_ids]
+        pose = pose[:, :, sort_ids]
         # TODO: this works only for single instances of objects; make it work for multiple instances
         assert np.array_equal(pclass_ids, class_ids)
     original_shape = image.shape
@@ -2329,7 +2303,7 @@ class MaskRCNN():
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
             if config.ESTIMATE_6D_POSE:
-                mrcnn_pose = build_fpn_pose_graph(rois, mrcnn_feature_maps,
+                mrcnn_pose_trans, mrcnn_pose_rot = build_fpn_pose_graph(rois, mrcnn_feature_maps,
                                                   input_depth, input_image_meta,
                                                   config.NUM_CLASSES, config.TRAIN_BN)
 
@@ -2348,15 +2322,19 @@ class MaskRCNN():
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
             if config.ESTIMATE_6D_POSE:
+                with open(config.XYZ_MODEL_PATH, "rb") as f:
+                    df = np.array(pkl.load(f), dtype=np.float32)
+                xyz_models = tf.transpose(tf.constant(df), (0, 2, 1))
+                xyz = KL.Input(tensor=xyz_models)
                 pose_loss = KL.Lambda(lambda x: mrcnn_pose_loss_graph(*x), name="mrcnn_pose_loss")(
-                    [target_pose, target_class_ids, mrcnn_pose]
+                    [target_pose, target_class_ids, mrcnn_pose_trans, mrcnn_pose_rot, xyz]
                 )
 
             # Model
             inputs = [input_image, input_image_meta,
                       input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
             if config.ESTIMATE_6D_POSE:
-                inputs.append(input_gt_poses)
+                inputs.extend([input_gt_poses, xyz])
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
             if config.USE_DEPTH_AWARE_OPS:
@@ -2366,7 +2344,7 @@ class MaskRCNN():
                        rpn_rois, output_rois,
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
             if config.ESTIMATE_6D_POSE:
-                outputs.extend([mrcnn_pose, pose_loss])
+                outputs.extend([mrcnn_pose_trans, mrcnn_pose_rot, pose_loss])
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
             # Network Heads
