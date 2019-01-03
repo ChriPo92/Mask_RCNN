@@ -36,6 +36,7 @@ import cv2
 import pandas as pd
 import skimage.io
 import skimage.color
+import scipy.io as scio
 import keras.layers as KL
 import keras.backend as KB
 import depth_aware_operations.da_convolution as da_conv
@@ -76,7 +77,8 @@ def load_id_classes_dict(path):
         for i, line in enumerate(f):
             ycb_id = int(line[:3])
             name = line[4:-1]
-            id_class[i] = {"ycb_id": ycb_id, "name": name}
+            # 0 is background
+            id_class[i+1] = {"ycb_id": ycb_id, "name": name}
     return id_class
 
 def load_image_ids(path):
@@ -90,7 +92,6 @@ def load_image_ids(path):
 ########################################################################################################################
 #                                                        Dataset                                                       #
 ########################################################################################################################
-
 class YCBVDataset(utils.Dataset):
     def load_ycbv(self, dataset_dir, subset, class_ids=None, use_annotation="label", use_rgbd=False):
         """Load a subset of the COCO dataset.
@@ -154,7 +155,7 @@ class YCBVDataset(utils.Dataset):
         annotation_path = self.image_info[image_id]["annotations"]
         # labels are saved in an image, as a mask of all objects, where each objects
         # mask consists of its corresponding class_id
-        ann = cv2.imread(annotation_path, 0)
+        ann = skimage.io.imread(annotation_path, 0)
         classes = np.unique(ann)[1:] # drop the zero (background)
         masks = []
         class_ids = []
@@ -179,6 +180,37 @@ class YCBVDataset(utils.Dataset):
             image = np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)
         return image
 
+    def load_pose(self, image_id):
+        """
+        Load Instance poses for given image_id
+        :param image_id: internal ID of the image
+        :return:
+        poses: A bool array of shape [4, 4, instance count] with
+            one pose per instance.
+        class_ids: [instance_count] a 1D array of class IDs of the instance masks.
+        """
+        # If not a YCB image, delegate to parent class.
+        image_info = self.image_info[image_id]
+        if image_info["source"] != "YCBV":
+            return super(YCBVDataset, self).load_mask(image_id)
+
+
+        meta_path = self.image_info[image_id]["meta"]
+        meta = scio.loadmat(meta_path)
+        # pose is saved as an [3, 4, N] matrix; needs to be [4, 4, N]
+        poses = meta["poses"]
+        # first repeats [0, 0, 0, 1] N times to create an array of
+        # shape [1, 4, N] and then concatenates it with the first
+        # dimension of the poses matrix to create matrix of shape
+        # [4, 4, N] where the last row is always [0, 0, 0, 1]
+        fin_pose = np.concatenate((meta["poses"],
+                                   np.tile(np.array([[0], [0], [0], [1]]),
+                                           (1, 1, meta["poses"].shape[2]))))
+        class_ids = np.squeeze(meta["cls_indexes"])
+        # IMPORTANT: The indices and poses are not yet in the same order as the masks.
+        # This is however important later on, so something needs to be done to achieve
+        # this. For now this is handled by load image gt
+        return fin_pose, class_ids
 
 ########################################################################################################################
 #                                                      Backbone                                                        #
@@ -245,14 +277,14 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
     IMAGE_RESIZE_MODE = "square"#"none" #
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
-
+    FPN_CLASSIF_FC_LAYERS_SIZE = 512
     # TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
@@ -264,9 +296,13 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 203
-    # TRAIN_ROIS_PER_IMAGE = 100
+    TRAIN_ROIS_PER_IMAGE = 70
     USE_DEPTH_AWARE_OPS = False
+
     LEARNING_RATE = 0.005
+    ESTIMATE_6D_POSE = True
+    XYZ_MODEL_PATH = "/home/christoph/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"
+
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
     # BACKBONE = da_resnet_graph
@@ -274,6 +310,7 @@ class YCBVConfig(Config):
     #     [[int(math.ceil(image_shape[0] / stride)),
     #       int(math.ceil(image_shape[1] / stride))]
     #      for stride in config.BACKBONE_STRIDES])
+    MAX_GT_INSTANCES = 50 # was 100, but normally there should never be more than 100 GT Instances in on picture
 
 ########################################################################################################################
 #                                               Image Augmentation                                                     #
@@ -691,8 +728,9 @@ if __name__ == '__main__':
         # Right/Left flip 50% of the time
         # TODO: if image is flipped, the 6d Pose changes --> make amends
         # TODO: check if image augmentation works for rgbd images as well, then create more sophisticated augmentation
-        #augmentation = ia.augmenters.Fliplr(0.5)
-        augmentation = seq
+        #augmentation = seq
+        # augmentation = ia.augmenters.Fliplr(0.5)
+        augmentation = None
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         num = 0

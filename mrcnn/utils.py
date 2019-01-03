@@ -382,6 +382,16 @@ class Dataset(object):
         class_ids = np.empty([0], np.int32)
         return mask, class_ids
 
+    def load_pose(self, image_id):
+        """
+            Load Instance poses for given image_id
+            :param image_id: internal ID of the image
+            :return:
+            poses: A bool array of shape [4, 4, instance count] with
+                one pose per instance.
+            class_ids: a 1D array of class IDs of the instance masks.
+        """
+        return None
 
 def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square"):
     """Resizes an image keeping the aspect ratio unchanged.

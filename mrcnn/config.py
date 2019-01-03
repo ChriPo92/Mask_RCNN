@@ -191,7 +191,8 @@ class Config(object):
         "rpn_bbox_loss": 1.,
         "mrcnn_class_loss": 1.,
         "mrcnn_bbox_loss": 1.,
-        "mrcnn_mask_loss": 1.
+        "mrcnn_mask_loss": 1.,
+        "mrcnn_pose_loss": 0.05
     }
 
     # Use RPN ROIs or externally generated ROIs for training
@@ -211,7 +212,7 @@ class Config(object):
     GRADIENT_CLIP_NORM = 5.0
 
     # enable training of 6D Pose estimation
-    OUTPUT_6D_POSE = False
+    ESTIMATE_6D_POSE = False
 
     # use depth-aware operation
     USE_DEPTH_AWARE_OPS = False
