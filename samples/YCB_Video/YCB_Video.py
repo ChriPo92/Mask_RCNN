@@ -266,7 +266,7 @@ class YCBVConfig(Config):
     # STEPS_PER_EPOCH = 203
     # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = False
-
+    LEARNING_RATE = 0.005
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
     # BACKBONE = da_resnet_graph
@@ -691,12 +691,12 @@ if __name__ == '__main__':
         # Right/Left flip 50% of the time
         # TODO: if image is flipped, the 6d Pose changes --> make amends
         # TODO: check if image augmentation works for rgbd images as well, then create more sophisticated augmentation
-        augmentation = ia.augmenters.Fliplr(0.5)
-        # augmentation = None
+        #augmentation = ia.augmenters.Fliplr(0.5)
+        augmentation = seq
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         num = 0
-        print("Training Resnet & profiling")
+        print("Training Resnet")
         # layers = "resnet"
         # model.train(dataset_train, dataset_val,
         #             learning_rate=config.LEARNING_RATE * 10,
@@ -706,8 +706,8 @@ if __name__ == '__main__':
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
-        num += 40
-        layers = "heads"
+        num += 100
+        layers = "all"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=num,
@@ -723,16 +723,16 @@ if __name__ == '__main__':
         # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
         #                             ).with_node_names(show_name_regexes=['.*']).build()
         # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
-        prof = tf.profiler.Profiler(graph=KB.get_session().graph)
-        prof.add_step(1, model.run_metadata)
+        # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        # prof.add_step(1, model.run_metadata)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        num += 60
-        layers = '4+'
+        num += 100
+        layers = 'all'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE,
+                    learning_rate=config.LEARNING_RATE/5,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
@@ -741,10 +741,10 @@ if __name__ == '__main__':
 
         # # Training - Stage 3
         # # Fine tune all layers
-        num += 80
+        num += 100
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
-                        learning_rate=config.LEARNING_RATE / 10,
+                        learning_rate=config.LEARNING_RATE / 50,
                         epochs=num,
                         layers='all',
                         augmentation=augmentation)
