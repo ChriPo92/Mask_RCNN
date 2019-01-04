@@ -1431,11 +1431,25 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     mask, class_ids = dataset.load_mask(image_id)
     pose, pclass_ids = dataset.load_pose(image_id)
     if config.ESTIMATE_6D_POSE:
+        def order_array_with_respect_to(x, y):
+            """
+
+            :param x: array that is to be ordered
+            :param y: array that is to be compared to
+            :return: ordered indices of x that are present in y
+            """
+            index = np.argsort(x)
+            sorted_x = x[index]
+            sorted_index = np.searchsorted(sorted_x, y)
+            yindex = np.take(index, sorted_index, mode="clip")
+            mask = x[yindex] != y
+            return yindex[~mask]
+
         assert augmentation is None
-        sort_ids = np.argsort(pclass_ids)
+        sort_ids = order_array_with_respect_to(pclass_ids, class_ids)
         pclass_ids = pclass_ids[sort_ids]
         pose = pose[:, :, sort_ids]
-        # TODO: this works only for single instances of objects; make it work for multiple instances
+        # TODO: this works only for single instances of objects and only for objects that have masks; make it always work
         assert np.array_equal(pclass_ids, class_ids)
     original_shape = image.shape
     image, window, scale, padding, crop = utils.resize_image(

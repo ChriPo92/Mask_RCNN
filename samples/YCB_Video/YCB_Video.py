@@ -277,14 +277,14 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 2
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
     IMAGE_RESIZE_MODE = "square"#"none" #
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
-    FPN_CLASSIF_FC_LAYERS_SIZE = 512
+    # FPN_CLASSIF_FC_LAYERS_SIZE = 512
     # TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
@@ -296,12 +296,12 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 203
-    TRAIN_ROIS_PER_IMAGE = 70
+    # TRAIN_ROIS_PER_IMAGE = 70
     USE_DEPTH_AWARE_OPS = False
 
     LEARNING_RATE = 0.005
     ESTIMATE_6D_POSE = True
-    XYZ_MODEL_PATH = "/home/christoph/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"
+    XYZ_MODEL_PATH = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
@@ -310,7 +310,7 @@ class YCBVConfig(Config):
     #     [[int(math.ceil(image_shape[0] / stride)),
     #       int(math.ceil(image_shape[1] / stride))]
     #      for stride in config.BACKBONE_STRIDES])
-    MAX_GT_INSTANCES = 50 # was 100, but normally there should never be more than 100 GT Instances in on picture
+    # MAX_GT_INSTANCES = 50 # was 100, but normally there should never be more than 100 GT Instances in on picture
 
 ########################################################################################################################
 #                                               Image Augmentation                                                     #
@@ -744,8 +744,8 @@ if __name__ == '__main__':
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
-        num += 100
-        layers = "all"
+        num += 50
+        layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=num,
@@ -766,8 +766,8 @@ if __name__ == '__main__':
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        num += 100
-        layers = 'all'
+        num += 50
+        layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE/5,
@@ -779,7 +779,7 @@ if __name__ == '__main__':
 
         # # Training - Stage 3
         # # Fine tune all layers
-        num += 100
+        num += 50
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                         learning_rate=config.LEARNING_RATE / 50,
