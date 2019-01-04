@@ -284,7 +284,7 @@ class YCBVConfig(Config):
     IMAGE_RESIZE_MODE = "square"#"none" #
     IMAGE_MIN_DIM = 480
     IMAGE_MAX_DIM = 640
-    FPN_CLASSIF_FC_LAYERS_SIZE = 512
+    # FPN_CLASSIF_FC_LAYERS_SIZE = 512
     # TRAIN_BN = None
     # should be half of IMAGE_MAX_DIM I think, because the Anchors are scaled up to twice the scale (?)
     RPN_ANCHOR_SCALES = (20, 40, 80, 160, 320)
@@ -296,7 +296,7 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 203
-    TRAIN_ROIS_PER_IMAGE = 70
+    # TRAIN_ROIS_PER_IMAGE = 70
     USE_DEPTH_AWARE_OPS = False
 
     ESTIMATE_6D_POSE = True
