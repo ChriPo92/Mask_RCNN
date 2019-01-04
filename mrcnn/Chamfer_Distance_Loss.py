@@ -108,7 +108,7 @@ def mrcnn_pose_loss_graph(target_poses, target_class_ids, pred_trans, pred_rot, 
 class ChamferLossTest(tf.test.TestCase):
 
     def testRotationConvergence(self):
-        with open("/home/christoph/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl", "rb") as f:
+        with open(os.path.join(HOME_FOLDER, "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"), "rb") as f:
             # pkl.dump(df, f)
             df = np.array(pkl.load(f), dtype=np.float32)
         pos_obj_models = tf.constant(df)
@@ -134,7 +134,7 @@ class ChamferLossTest(tf.test.TestCase):
             self.assertAllClose(tf_rot1.eval()[1:], tf_rot2.eval()[1:], rtol=1e-4)
 
     def testTranslationConvergence(self):
-        with open("/home/christoph/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl", "rb") as f:
+        with open(os.path.join(HOME_FOLDER, "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"), "rb") as f:
             # pkl.dump(df, f)
             df = np.array(pkl.load(f), dtype=np.float32)
         pos_obj_models = tf.constant(df)
@@ -170,7 +170,8 @@ if __name__=='__main__':
     from samples.LINEMOD.LINEMOD import linemod_point_cloud
     from samples.YCB_Video.YCB_Video import YCBVDataset
 
-    YCB_path = "/home/christoph/Hitachi/YCB_Video_Dataset/"
+    HOME_FOLDER = "/common/homes/staff/pohl/"
+    YCB_path = os.path.join(HOME_FOLDER, "Hitachi/YCB_Video_Dataset/")
     xyz_file = "models/035_power_drill/points.xyz"
     print(f"Optimizing Loss for {xyz_file}")
     dataset = YCBVDataset()
@@ -179,6 +180,8 @@ if __name__=='__main__':
     image = dataset.load_image(dataset.image_from_source_map["YCBV.0081/000982"])
     mask, classes = dataset.load_mask(dataset.image_from_source_map["YCBV.0081/000982"])
     poses, pclasses = dataset.load_pose(dataset.image_from_source_map["YCBV.0081/000982"])
-    # df = create_xyz_dataframe(dataset, YCB_path)
+    df = create_xyz_dataframe(dataset, YCB_path)
+    with open("/common/homes/staff/pohl/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl", "wb") as f:
+        pkl.dump(df, f)
     tf.test.main()
 

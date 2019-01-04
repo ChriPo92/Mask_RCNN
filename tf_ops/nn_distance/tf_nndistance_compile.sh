@@ -1,6 +1,6 @@
 TF_INC=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_include())')
 TF_LIB=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')
-CUDA_PATH=/usr/local/cuda
+CUDA_PATH=/common/homes/staff/pohl/install/cuda-9.0
 
 nvcc -std=c++11 -c -o tf_nndistance_g.cu.o tf_nndistance_g.cu \
 	-I $TF_INC -I$TF_INC/external/nsync/public -D GOOGLE_CUDA=1 \
