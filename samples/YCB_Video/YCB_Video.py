@@ -662,6 +662,15 @@ if __name__ == '__main__':
             config.IMAGE_CHANNEL_COUNT = 4
         else:
             assert config.USE_DEPTH_AWARE_OPS == False
+    elif args.command == "test":
+        config = YCBVConfig()
+        config.USE_RPN_ROIS = False
+        if args.depth_aware:
+            config.USE_DEPTH_AWARE_OPS = True
+            config.MEAN_PIXEL = np.append(config.MEAN_PIXEL, 0.0)
+            config.IMAGE_CHANNEL_COUNT = 4
+        else:
+            assert config.USE_DEPTH_AWARE_OPS == False
     else:
         class InferenceConfig(YCBVConfig):
             # Set batch size to 1 since we'll be running inference on

@@ -1272,13 +1272,13 @@ def build_fpn_pointnet_transl_graph(rois, feature_maps, depth_image, image_meta,
     pcl_list = K.expand_dims(pcl_list, -1)
     # expand to [batch, num_rois, h*w, channels, 1]
     feature_list = K.expand_dims(feature_list, -1)
-    # transform to [batch, num_rois, h*w, 2, 1]
-    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, config.TOP_DOWN_PYRAMID_SIZE / 2), padding="valid"),
+    # transform to [batch, num_rois, h*w, 4, 1]
+    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, config.TOP_DOWN_PYRAMID_SIZE / 4), padding="valid"),
                            name="mrcnn_pose_feature_conv")(feature_list)
-    # merge to [batch, num_rois, h*w, 5, 1]
+    # merge to [batch, num_rois, h*w, 7, 1]
     point_cloud_repr = KL.merge.concatenate(pcl_list, feature_list, axis=-2)
     # transform to [batch, num_rois, h*w, 1, 64]
-    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 5), padding="valid"),
+    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 7), padding="valid"),
                            name="mrcnn_pose_conv1")(point_cloud_repr)
     x = KL.TimeDistributed(BatchNorm(),
                            name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
