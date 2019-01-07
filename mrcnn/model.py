@@ -1166,14 +1166,19 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
 
     x, d = PyramidROIAlign([24, 24], depth_image=depth_image,
                         name="roi_align_pose")([rois, image_meta] + feature_maps)
+    rois_trans = KL.Lambda(lambda y: tf.expand_dims(tf.expand_dims(y, axis=-1), axis=-1))(rois)
+    rois_trans = KL.TimeDistributed(KL.Deconv2D(16, (1, 2), padding="valid"),
+                                    name="mrcnn_pose_rois_trans_deconv")(rois_trans)
+    rois_trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 2), padding="valid", activation="sigmoid"),
+                                    name="mrcnn_pose_rois_trans_conv")(rois_trans)
     # merge image and depth, so that x = x_d[:, :, :, :, :-1] & d = x_d[:, :, :, :, -1]
     x_d = KL.merge.concatenate([x, d])
     x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
                              name="mrcnn_pose_conv1")(x_d)
-    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
-                             name="mrcnn_pose_conv2")(x_d)
-    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
-                             name="mrcnn_pose_conv3")(x_d)
+    # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+    #                          name="mrcnn_pose_conv2")(x_d)
+    # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+    #                          name="mrcnn_pose_conv3")(x_d)
     # halfes the width and height dimensions to [12, 12] --> [Batch, num_rois, 12, 12, 256]
     x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same", (2, 2)),
                              name="mrcnn_pose_conv4")(x_d)
@@ -1188,6 +1193,7 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
                            name="mrcnn_pose_trans_conva")(shared)
     trans = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
                            name="mrcnn_pose_trans_convb")(trans)
+    trans = KL.Add()([trans, rois_trans])
     trans = KL.Lambda(lambda x: K.squeeze(x, 3),
                        name="mrcnn_pose_trans_squeeze")(trans)
 

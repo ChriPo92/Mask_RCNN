@@ -650,7 +650,7 @@ if __name__ == '__main__':
         if args.debug == "cli":
             sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         else:
-            sess = tf_debug.TensorBoardDebugWrapperSession(sess, "i61nb003:7000")
+            sess = tf_debug.TensorBoardDebugWrapperSession(sess, "localhost:7000", send_traceback_and_source_code=False)
         KB.set_session(sess)
 
     # Configurations
