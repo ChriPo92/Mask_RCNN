@@ -12,12 +12,14 @@ import sys
 import random
 import itertools
 import colorsys
+import cv2
 
 import numpy as np
 from skimage.measure import find_contours
 import matplotlib.pyplot as plt
 from matplotlib import patches,  lines
 from matplotlib.patches import Polygon
+from scipy.spatial import ConvexHull
 import IPython.display
 
 # Root directory of the project
@@ -84,7 +86,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
                       figsize=(16, 16), ax=None,
                       show_mask=True, show_bbox=True,
-                      colors=None, captions=None):
+                      colors=None, captions=None, poses=None, intrinsic_matrix=None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -133,8 +135,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         y1, x1, y2, x2 = boxes[i]
         if show_bbox:
             p = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=2,
-                                alpha=0.7, linestyle="dashed",
-                                edgecolor=color, facecolor='none')
+                                  alpha=0.7, linestyle="dashed",
+                                  edgecolor=color, facecolor='none')
             ax.add_patch(p)
 
         # Label
@@ -165,7 +167,16 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
+        if poses is not None:
+            pose = poses[i]
+            assert intrinsic_matrix is not None
+            p = get_orientation_line_points(pose, intrinsic_matrix, 0.1)
+            # print(p)
+            ax.plot([p[0, 0], p[1, 0]], [p[0, 1], p[1, 1]], "r-")
+            ax.plot([p[0, 0], p[2, 0]], [p[0, 1], p[2, 1]], "g-")
+            ax.plot([p[0, 0], p[3, 0]], [p[0, 1], p[3, 1]], "y-")
     ax.imshow(masked_image.astype(np.uint8))
+
     if auto_show:
         plt.show()
 
@@ -503,3 +514,85 @@ def display_weight_stats(model):
                 "{:+9.4f}".format(w.std()),
             ])
     display_table(table)
+
+def get_orientation_line_points(pose, K, scale=0.05):
+    """
+    calculates the start and end points of each principal vector along the unit axis in the object frame in image coordinates
+    :return:
+    """
+    # coordinates in homogeneous coordinates in the object frame
+    origin = np.array([0, 0, 0, 1])
+    x_axis = np.array([scale, 0, 0, 1])
+    y_axis = np.array([0, scale, 0, 1])
+    z_axis = np.array([0, 0, scale, 1])
+    T_o_c = pose
+    origin_cam = np.matmul(T_o_c, origin)
+    x_axis_cam = np.matmul(T_o_c, x_axis)
+    y_axis_cam = np.matmul(T_o_c, y_axis)
+    z_axis_cam = np.matmul(T_o_c, z_axis)
+    # cam_rot = RT[:, :3].copy()
+    # rvec, _ = cv2.Rodrigues(cam_rot)
+    # tvec = RT[:, 3:].copy()
+    rvec = np.array([0, 0, 0], np.float32)
+    tvec = rvec.copy()  # 6D Poses are given in Camera Coordinates and not in World Coordinates
+    dist_coeffs = 0  # np.array([0.04112172, -0.4798174, 0, 0, 1.890084])
+    coords = np.concatenate((origin_cam[:3], x_axis_cam[:3], y_axis_cam[:3], z_axis_cam[:3])).reshape(-1, 3)
+    image_points, _ = cv2.projectPoints(coords, rvec, tvec, K, dist_coeffs)
+    return image_points.reshape(-1, 2)
+
+def calculate_2d_hull_of_pointcloud(pc, rot, trans, camera_calibration_matrix):
+    T_o_c = np.zeros((4, 4))
+    T_o_c[:3, :3] = np.array(rot).reshape(3, 3)
+    T_o_c[:3, 3] = np.array(trans).reshape(3, )
+    T_o_c[3, 3] = 1
+    hom_pc = cv2.convertPointsToHomogeneous(pc).reshape(-1, 4).transpose()
+    pc_cam_hom = np.matmul(T_o_c, hom_pc).transpose().reshape(-1, 1, 4)
+    pc_cam = cv2.convertPointsFromHomogeneous(pc_cam_hom).reshape(-1, 3)
+    pc_2d, _ = cv2.projectPoints(pc_cam, np.array([0, 0, 0], np.float32), np.array([0, 0, 0], np.float32),
+                                 camera_calibration_matrix, 0)
+    pc_2d = pc_2d.reshape(-1, 2)
+    hull = ConvexHull(pc_2d)
+    return pc_2d, hull
+
+def visualize_poses(image, poses, object_ids, camera_matrix, ax=None):
+    """
+
+    :param poses: [N, 3, 4]
+    :param object_ids: [N]
+    :return:
+    """
+    if ax is None:
+        fig, ax = plt.subplots()
+    if image.shape[2] > 3:
+        image = image.astype(np.uint32).copy()[:, :, :3]
+    ax.imshow(image)
+    classes = np.unique(object_ids)
+    color_cycle = plt.cm.get_cmap("jet", len(classes))
+    for i, cl in enumerate(classes):
+        color = color_cycle(i)
+        ids = np.where(object_ids == cl)[0]
+        class_poses = poses[ids]
+        for pose in class_poses:
+            p = get_orientation_line_points(pose, camera_matrix)
+            ax.plot([p[0, 0], p[1, 0]], [p[0, 1], p[1, 1]], color=color)
+            ax.plot([p[0, 0], p[2, 0]], [p[0, 1], p[2, 1]], color=color)
+            ax.plot([p[0, 0], p[3, 0]], [p[0, 1], p[3, 1]], color=color)
+
+def visualize_pointcloud_hulls(image, poses, pointclouds, object_ids, camera_matrix, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots()
+    if image.shape[2] > 3:
+        image = image.astype(np.uint32).copy()[:, :, :3]
+    ax.imshow(image)
+    classes = np.unique(object_ids)
+    color_cycle = plt.cm.get_cmap("jet", len(classes))
+    for i, cl in enumerate(classes):
+        color = color_cycle(i)
+        ids = np.where(object_ids == cl)[0]
+        class_poses = poses[ids]
+        pcl = pointclouds[ids]
+        for j in range(len(ids)):
+            pc_2d, hull = calculate_2d_hull_of_pointcloud(pcl[j], class_poses[j][:3, :3],
+                                                          class_poses[j][:3, 3], camera_matrix)
+            for simplex in hull.simplices:
+                ax.plot(pc_2d[simplex, 0], pc_2d[simplex, 1], color=color)
