@@ -1186,15 +1186,15 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
     # x_d = KL.TimeDistributed(time_distributed_da_conv_model(num_classes, (3, 3), "same", (2, 2)),
     #                          name="mrcnn_pose_conv5")(x_d)
     x_int = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                                    name="blub_mrcnn_pose_conv1")(x)
+                                    name="mrcnn_pose_conv1")(x)
     d_int = KL.TimeDistributed(KL.Conv2D(2, (3, 3), padding="same"),
                                     name="mrcnn_pose_dconv1")(d)
     x_int = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="blub_mrcnn_pose_conv2")(x_int)
+                           name="mrcnn_pose_conv2")(x_int)
     d_int = KL.TimeDistributed(KL.Conv2D(4, (3, 3), padding="same"),
                            name="mrcnn_pose_dconv2")(d_int)
     x_int = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="blub_mrcnn_pose_conv3")(x_int)
+                           name="mrcnn_pose_conv3")(x_int)
     d_int = KL.TimeDistributed(KL.Conv2D(8, (3, 3), padding="same"),
                            name="mrcnn_pose_dconv3")(d_int)
     d_add = KL.TimeDistributed(KL.Conv2D(8, (3, 3), padding="same"),
@@ -1203,12 +1203,12 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
     x = KL.Add(name="mrcnn_pose_res_img")([x_int, x])
     # # halfes the width and height dimensions to [12, 12] --> [Batch, num_rois, 12, 12, 256]
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same", strides=(2, 2)),
-                           name="blub_mrcnn_pose_conv4")(x)
+                           name="mrcnn_pose_conv4")(x)
     d = KL.TimeDistributed(KL.Conv2D(16, (3, 3), padding="same", strides=(2, 2)),
                            name="mrcnn_pose_dconv4")(d)
     # changes the width and height dimension to [6, 6] --> [Batch, num_rois, 6, 6, num_classes]
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (3, 3), padding="same", strides=(2, 2)),
-                           name="blub_mrcnn_pose_conv5")(x)
+                           name="mrcnn_pose_conv5")(x)
     d = KL.TimeDistributed(KL.Conv2D(num_classes, (3, 3), padding="same", strides=(2, 2)),
                            name="mrcnn_pose_dconv5")(d)
     # shared = KL.Lambda(lambda y: y[:, :, :, :, :-1])(x_d) # discard the depth map
