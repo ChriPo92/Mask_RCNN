@@ -29,7 +29,7 @@ DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
 
 from mrcnn import utils
-from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph
+from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_tf, mrcnn_pose_loss_graph_keras
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
@@ -518,12 +518,12 @@ class PyramidROIAlign(KE.Layer):
 
         # Re-add the batch dimension
         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
-        pooled = tf.reshape(pooled, shape)
+        pooled = tf.reshape(pooled, shape, name="pooled")
 
         if self.depth_image is not None:
             pooled_depth = tf.gather(pooled_depth, ix)
             shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled_depth)[1:]], axis=0)
-            pooled_depth = tf.reshape(pooled_depth, shape)
+            pooled_depth = tf.reshape(pooled_depth, shape, name="pooled_depth")
             return [pooled, pooled_depth]
         return pooled
 
@@ -1159,7 +1159,7 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
         o_x = BatchNorm()(o_x, training=train_bn)
         o_x = KL.Activation("relu")(o_x)
         merged_output = KL.merge.concatenate([o_x, o_d], axis=-1)
-        merged_model = KE.Model(input=merged_input, output=merged_output)
+        merged_model = KE.Model(inputs=merged_input, outputs=merged_output)
         return merged_model
 
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
@@ -1169,29 +1169,55 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
     rois_trans = KL.Lambda(lambda y: tf.expand_dims(tf.expand_dims(y, axis=-1), axis=-1))(rois)
     rois_trans = KL.TimeDistributed(KL.Deconv2D(16, (1, 2), padding="valid"),
                                     name="mrcnn_pose_rois_trans_deconv")(rois_trans)
-    rois_trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 2), padding="valid", activation="sigmoid"),
+    rois_trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 2), padding="valid", activation="tanh"),
                                     name="mrcnn_pose_rois_trans_conv")(rois_trans)
     # merge image and depth, so that x = x_d[:, :, :, :, :-1] & d = x_d[:, :, :, :, -1]
-    x_d = KL.merge.concatenate([x, d])
-    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
-                             name="mrcnn_pose_conv1")(x_d)
+    # x_d = KL.merge.concatenate([x, d])
     # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
-    #                          name="mrcnn_pose_conv2")(x_d)
-    # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
-    #                          name="mrcnn_pose_conv3")(x_d)
-    # halfes the width and height dimensions to [12, 12] --> [Batch, num_rois, 12, 12, 256]
-    x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same", (2, 2)),
-                             name="mrcnn_pose_conv4")(x_d)
+    #                          name="mrcnn_pose_conv1")(x_d)
+    # # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+    # #                          name="mrcnn_pose_conv2")(x_d)
+    # # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same"),
+    # #                          name="mrcnn_pose_conv3")(x_d)
+    # # halfes the width and height dimensions to [12, 12] --> [Batch, num_rois, 12, 12, 256]
+    # x_d = KL.TimeDistributed(time_distributed_da_conv_model(256, (3, 3), "same", (2, 2)),
+    #                          name="mrcnn_pose_conv4")(x_d)
+    # # changes the width and height dimension to [6, 6] --> [Batch, num_rois, 6, 6, num_classes]
+    # x_d = KL.TimeDistributed(time_distributed_da_conv_model(num_classes, (3, 3), "same", (2, 2)),
+    #                          name="mrcnn_pose_conv5")(x_d)
+    x_int = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                                    name="blub_mrcnn_pose_conv1")(x)
+    d_int = KL.TimeDistributed(KL.Conv2D(2, (3, 3), padding="same"),
+                                    name="mrcnn_pose_dconv1")(d)
+    x_int = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                           name="blub_mrcnn_pose_conv2")(x_int)
+    d_int = KL.TimeDistributed(KL.Conv2D(4, (3, 3), padding="same"),
+                           name="mrcnn_pose_dconv2")(d_int)
+    x_int = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                           name="blub_mrcnn_pose_conv3")(x_int)
+    d_int = KL.TimeDistributed(KL.Conv2D(8, (3, 3), padding="same"),
+                           name="mrcnn_pose_dconv3")(d_int)
+    d_add = KL.TimeDistributed(KL.Conv2D(8, (3, 3), padding="same"),
+                               name="mrcnn_pose_dconv_add")(d)
+    d = KL.Add(name="mrcnn_pose_res_depth")([d_int, d_add])
+    x = KL.Add(name="mrcnn_pose_res_img")([x_int, x])
+    # # halfes the width and height dimensions to [12, 12] --> [Batch, num_rois, 12, 12, 256]
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same", strides=(2, 2)),
+                           name="blub_mrcnn_pose_conv4")(x)
+    d = KL.TimeDistributed(KL.Conv2D(16, (3, 3), padding="same", strides=(2, 2)),
+                           name="mrcnn_pose_dconv4")(d)
     # changes the width and height dimension to [6, 6] --> [Batch, num_rois, 6, 6, num_classes]
-    x_d = KL.TimeDistributed(time_distributed_da_conv_model(num_classes, (3, 3), "same", (2, 2)),
-                             name="mrcnn_pose_conv5")(x_d)
-    shared = KL.Lambda(lambda y: y[:, :, :, :, :-1])(x_d) # discard the depth map
-
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (3, 3), padding="same", strides=(2, 2)),
+                           name="blub_mrcnn_pose_conv5")(x)
+    d = KL.TimeDistributed(KL.Conv2D(num_classes, (3, 3), padding="same", strides=(2, 2)),
+                           name="mrcnn_pose_dconv5")(d)
+    # shared = KL.Lambda(lambda y: y[:, :, :, :, :-1])(x_d) # discard the depth map
+    shared = KL.Add(name="mrcnn_pose_img_depth_add")([x, d])
     # Translation regression
     # changes [h w] to [3 1]
-    trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 6), strides=2, activation="relu"),
+    trans = KL.TimeDistributed(KL.Conv2D(num_classes, (2, 6), strides=2, activation="tanh"),
                            name="mrcnn_pose_trans_conva")(shared)
-    trans = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
+    trans = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="tanh"),
                            name="mrcnn_pose_trans_convb")(trans)
     trans = KL.Add()([trans, rois_trans])
     trans = KL.Lambda(lambda x: K.squeeze(x, 3),
@@ -1199,9 +1225,9 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
 
     # Rotation regression
     # changes [h w] to [3 3]
-    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=1, activation="relu"),
+    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (4, 4), strides=1, activation="tanh"),
                            name="mrcnn_pose_rot_conva")(shared)
-    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
+    rot = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="tanh"),
                                name="mrcnn_pose_rot_convb")(rot)
 
     return trans, rot
@@ -1544,7 +1570,16 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     # Load image and mask
     image = dataset.load_image(image_id)
     mask, class_ids = dataset.load_mask(image_id)
-    pose, pclass_ids = dataset.load_pose(image_id)
+    pose, pclass_ids, intrinsic_matrix = dataset.load_pose(image_id)
+    original_shape = image.shape
+    image, window, scale, padding, crop = utils.resize_image(
+        image,
+        min_dim=config.IMAGE_MIN_DIM,
+        min_scale=config.IMAGE_MIN_SCALE,
+        max_dim=config.IMAGE_MAX_DIM,
+        mode=config.IMAGE_RESIZE_MODE)
+    # TODO: make a utils resize_pose function
+    mask = utils.resize_mask(mask, scale, padding, crop)
     if config.ESTIMATE_6D_POSE:
         def order_array_with_respect_to(x, y):
             """
@@ -1560,20 +1595,16 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
             mask = x[yindex] != y
             return yindex[~mask]
 
-        assert augmentation is None
+        assert augmentation is None, "Augmentation is not supported for Pose Estimation yet"
+        assert np.max(pose) <= 1.0, f"For learning, the maximum number in the pose should not be greater than 1, but is {np.max(pose)}"
         sort_ids = order_array_with_respect_to(pclass_ids, class_ids)
         pclass_ids = pclass_ids[sort_ids]
         pose = pose[:, :, sort_ids]
         # TODO: this works only for single instances of objects and only for objects that have masks; make it always work
         assert np.array_equal(pclass_ids, class_ids)
-    original_shape = image.shape
-    image, window, scale, padding, crop = utils.resize_image(
-        image,
-        min_dim=config.IMAGE_MIN_DIM,
-        min_scale=config.IMAGE_MIN_SCALE,
-        max_dim=config.IMAGE_MAX_DIM,
-        mode=config.IMAGE_RESIZE_MODE)
-    mask = utils.resize_mask(mask, scale, padding, crop)
+        # camera_matrix = utils.create_camera_matrix_from_intrinsic_matrix(intrinsic_matrix, scale, padding, crop)
+        # pose = np.transpose(np.matmul(np.transpose(pose, [2, 0, 1]), camera_matrix), [1, 2, 0])
+        pose = utils.transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop)
 
     # Random horizontal flips.
     # TODO: will be removed in a future update in favor of augmentation
@@ -2263,6 +2294,8 @@ class MaskRCNN():
         # Inputs
         input_image = KL.Input(
             shape=[None, None, config.IMAGE_SHAPE[2]], name="input_image")
+        # only for debbuging reasons
+        input_image_copy = KL.Lambda(lambda y: tf.identity(y), name="input_image_copy")(input_image)
         input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE],
                                     name="input_image_meta")
         if config.USE_DEPTH_AWARE_OPS:
@@ -2312,10 +2345,10 @@ class MaskRCNN():
         # Returns a list of the last layers of each stage, 5 in total.
         # Don't create the thead (stage 5), so we pick the 4th item in the list.
         if callable(config.BACKBONE):
-            _, C2, C3, C4, C5 = config.BACKBONE(input_image, stage5=True,
+            _, C2, C3, C4, C5 = config.BACKBONE(input_image_copy, stage5=True,
                                                 train_bn=config.TRAIN_BN, depth_image=input_depth)
         else:
-            _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE,
+            _, C2, C3, C4, C5 = resnet_graph(input_image_copy, config.BACKBONE,
                                              stage5=True, train_bn=config.TRAIN_BN, depth_image=input_depth)
         # Top-down Layers
         # TODO: add assert to varify feature map sizes match what's in config
@@ -2455,9 +2488,11 @@ class MaskRCNN():
                     df = np.array(pkl.load(f), dtype=np.float32)
                 xyz_models = tf.transpose(tf.constant(df), (0, 2, 1))
                 xyz = KL.Input(tensor=xyz_models)
-                pose_loss = KL.Lambda(lambda x: mrcnn_pose_loss_graph(*x), name="mrcnn_pose_loss")(
-                    [target_pose, target_class_ids, mrcnn_pose_trans, mrcnn_pose_rot, xyz]
-                )
+                # pose_loss = KL.Lambda(lambda x: mrcnn_pose_loss_graph_tf(*x), name="mrcnn_pose_loss")(
+                #     [target_pose, target_class_ids, mrcnn_pose_trans, mrcnn_pose_rot, xyz]
+                # )
+                pose_loss = mrcnn_pose_loss_graph_keras(target_pose, target_class_ids,
+                                                        mrcnn_pose_trans, mrcnn_pose_rot, xyz, config, df.shape[1])
 
             # Model
             inputs = [input_image, input_image_meta,
@@ -2491,14 +2526,14 @@ class MaskRCNN():
                 [rpn_rois, mrcnn_class, mrcnn_bbox, input_image_meta])
 
             # Create masks for detections
-            detection_boxes = KL.Lambda(lambda x: x[..., :4])(detections)
+            detection_boxes = KL.Lambda(lambda x: x[..., :4], name="mrcnn_detection_boxes")(detections)
             mrcnn_mask = build_fpn_mask_graph(detection_boxes, mrcnn_feature_maps,
                                               input_image_meta,
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
             if config.ESTIMATE_6D_POSE:
-                mrcnn_pose = build_fpn_pose_graph(detection_boxes, mrcnn_feature_maps,
+                mrcnn_pose_trans, mrcnn_pose_rot = build_fpn_pose_graph(detection_boxes, mrcnn_feature_maps,
                                                   input_depth, input_image_meta,
                                                   config.NUM_CLASSES, config.TRAIN_BN)
             inputs = [input_image, input_image_meta, input_anchors]
@@ -2507,7 +2542,7 @@ class MaskRCNN():
             if config.USE_DEPTH_AWARE_OPS:
                 inputs.insert(1, input_depth)
             if config.ESTIMATE_6D_POSE:
-                outputs.append(mrcnn_pose)
+                outputs.extend([mrcnn_pose_trans, mrcnn_pose_rot])
             model = KM.Model(inputs,
                              outputs,
                              name='mask_rcnn')
@@ -2884,7 +2919,7 @@ class MaskRCNN():
         return molded_images, image_metas, windows
 
     def unmold_detections(self, detections, mrcnn_mask, original_image_shape,
-                          image_shape, window):
+                          image_shape, window, trans=None, rot=None):
         """Reformats the detections of one image from the format of the neural
         network output to a format suitable for use in the rest of the
         application.
@@ -2895,12 +2930,15 @@ class MaskRCNN():
         image_shape: [H, W, C] Shape of the image after resizing and padding
         window: [y1, x1, y2, x2] Pixel coordinates of box in the image where the real
                 image is excluding the padding.
+        trans: [N, 3, 1, num_classes]
+        rot: [N, 3, 3, num_classes]
 
         Returns:
         boxes: [N, (y1, x1, y2, x2)] Bounding boxes in pixels
         class_ids: [N] Integer class IDs for each bounding box
         scores: [N] Float probability scores of the class_id
         masks: [height, width, num_instances] Instance masks
+        pose: [4, 4, num_instances]
         """
         # How many detections do we have?
         # Detections array is padded with zeros. Find the first class_id == 0.
@@ -2912,6 +2950,13 @@ class MaskRCNN():
         class_ids = detections[:N, 4].astype(np.int32)
         scores = detections[:N, 5]
         masks = mrcnn_mask[np.arange(N), :, :, class_ids]
+        if rot is not None and trans is not None:
+            f_rots = rot[np.arange(N), :, :, class_ids]
+            f_trans = trans[np.arange(N), :, class_ids]
+            pre_poses = np.concatenate((f_rots, np.expand_dims(f_trans, axis=-1)), axis=2)
+            shape = pre_poses.shape
+            poses = np.concatenate((pre_poses, np.tile([0, 0, 0, 1], (shape[0], 1, 1))), axis=1)
+
 
         # Translate normalized coordinates in the resized image to pixel
         # coordinates in the original image before resizing
@@ -2935,6 +2980,7 @@ class MaskRCNN():
             class_ids = np.delete(class_ids, exclude_ix, axis=0)
             scores = np.delete(scores, exclude_ix, axis=0)
             masks = np.delete(masks, exclude_ix, axis=0)
+            poses = np.delete(poses, exclude_ix, axis=0)
             N = class_ids.shape[0]
 
         # Resize masks to original image size and set boundary threshold.
@@ -2946,7 +2992,7 @@ class MaskRCNN():
         full_masks = np.stack(full_masks, axis=-1) \
             if full_masks else np.empty(original_image_shape[:2] + (0,))
 
-        return boxes, class_ids, scores, full_masks
+        return boxes, class_ids, scores, full_masks, poses
 
     def detect(self, images, verbose=0):
         """Runs the detection pipeline.
@@ -2997,20 +3043,26 @@ class MaskRCNN():
                       anchors]
         else:
             inputs = [molded_images, image_metas, anchors]
-        detections, _, _, mrcnn_mask, _, _, _ = \
-            self.keras_model.predict(inputs, verbose=0)
+        mrcnn_pose_rot, mrcnn_pose_trans = None, None
+        if self.config.ESTIMATE_6D_POSE:
+            detections, _, _, mrcnn_mask, _, _, _, mrcnn_pose_trans, mrcnn_pose_rot = \
+                self.keras_model.predict(inputs, verbose=0)
+        else:
+            detections, _, _, mrcnn_mask, _, _, _ = \
+                self.keras_model.predict(inputs, verbose=0)
         # Process detections
         results = []
         for i, image in enumerate(images):
-            final_rois, final_class_ids, final_scores, final_masks = \
+            final_rois, final_class_ids, final_scores, final_masks, final_poses = \
                 self.unmold_detections(detections[i], mrcnn_mask[i],
                                        image.shape, molded_images[i].shape,
-                                       windows[i])
+                                       windows[i], mrcnn_pose_trans[i], mrcnn_pose_rot[i])
             results.append({
                 "rois": final_rois,
                 "class_ids": final_class_ids,
                 "scores": final_scores,
                 "masks": final_masks,
+                "poses": final_poses
             })
         return results
 
@@ -3180,7 +3232,11 @@ class MaskRCNN():
         # Duplicate across the batch dimension because Keras requires it
         # TODO: can this be optimized to avoid duplicating the anchors?
         anchors = np.broadcast_to(anchors, (self.config.BATCH_SIZE,) + anchors.shape)
-        model_in = [molded_images, image_metas, anchors]
+        if self.config.USE_DEPTH_AWARE_OPS:
+            model_in = [molded_images[:, :, :, :3], np.expand_dims(molded_images[:, :, :, 3], axis=3), image_metas,
+                      anchors]
+        else:
+            model_in = [molded_images, image_metas, anchors]
 
         # Run inference
         if model.uses_learning_phase and not isinstance(K.learning_phase(), int):
@@ -3193,6 +3249,76 @@ class MaskRCNN():
         for k, v in outputs_np.items():
             log(k, v)
         return outputs_np
+
+    def run_trainings_graph(self, dataset, image_id, outputs, random_rois=0):
+        """Runs a sub-set of the computation graph that computes the given
+        outputs.
+
+        image_metas: If provided, the images are assumed to be already
+            molded (i.e. resized, padded, and normalized)
+
+        outputs: List of tuples (name, tensor) to compute. The tensors are
+            symbolic TensorFlow tensors and the names are for easy tracking.
+
+        Returns an ordered dict of results. Keys are the names received in the
+        input and values are Numpy arrays.
+        """
+        assert self.mode == "training"
+        model = self.keras_model
+
+        # Organize desired outputs into an ordered dict
+        outputs = OrderedDict(outputs)
+        for o in outputs.values():
+            assert o is not None
+
+        # Build a Keras function to run parts of the computation graph
+        inputs = model.inputs
+        if model.uses_learning_phase and not isinstance(K.learning_phase(), int):
+            inputs += [K.learning_phase()]
+        kf = K.function(model.inputs, list(outputs.values()))
+
+        # Prepare inputs
+        image, image_meta, class_ids, bbox, mask, pose = load_image_gt(dataset, self.config, image_id)
+        image_shape = image.shape
+        if self.config.USE_DEPTH_AWARE_OPS:
+            input_image = np.expand_dims(image[:, :, :3], 0)
+            depth = np.expand_dims(np.expand_dims(image[:, :, 3], 0), -1)
+        else:
+            input_image = np.expand_dims(image, 0)
+        # Anchors
+        anchors = self.get_anchors(image_shape)
+        rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors,
+                                                class_ids, bbox, self.config)
+        # Duplicate across the batch dimension because Keras requires it
+        # TODO: can this be optimized to avoid duplicating the anchors?
+        anchors = np.broadcast_to(anchors, (self.config.BATCH_SIZE,) + anchors.shape)
+        inputs = [input_image, np.expand_dims(image_meta, 0),
+                  np.expand_dims(rpn_match, 0), np.expand_dims(rpn_bbox, 0),
+                  np.expand_dims(class_ids, 0), np.expand_dims(bbox, 0), np.expand_dims(mask, 0)]
+        if self.config.ESTIMATE_6D_POSE:
+            with open(self.config.XYZ_MODEL_PATH, "rb") as f:
+                df = np.array(pkl.load(f), dtype=np.float32)
+            xyz_models =np.transpose(df, (0, 2, 1))
+            inputs.extend([np.expand_dims(pose, 0), xyz_models])
+
+        if not self.config.USE_RPN_ROIS:
+            rpn_rois = generate_random_rois(
+                image.shape, random_rois, class_ids, bbox)
+            inputs.append(np.expand_dims(rpn_rois, 0))
+        if self.config.USE_DEPTH_AWARE_OPS:
+            inputs.insert(1, depth)
+        # Run inference
+        if model.uses_learning_phase and not isinstance(K.learning_phase(), int):
+            inputs.append(0.)
+        outputs_np = kf(inputs)
+
+        # Pack the generated Numpy arrays into a a dict and log the results.
+        outputs_np = OrderedDict([(k, v)
+                                  for k, v in zip(outputs.keys(), outputs_np)])
+        for k, v in outputs_np.items():
+            log(k, v)
+        return outputs_np
+
 
 
 ############################################################

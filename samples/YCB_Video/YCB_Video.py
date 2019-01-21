@@ -199,6 +199,7 @@ class YCBVDataset(utils.Dataset):
         meta = scio.loadmat(meta_path)
         # pose is saved as an [3, 4, N] matrix; needs to be [4, 4, N]
         poses = meta["poses"]
+        intrinsic_matrix = meta["intrinsic_matrix"]
         # first repeats [0, 0, 0, 1] N times to create an array of
         # shape [1, 4, N] and then concatenates it with the first
         # dimension of the poses matrix to create matrix of shape
@@ -210,7 +211,7 @@ class YCBVDataset(utils.Dataset):
         # IMPORTANT: The indices and poses are not yet in the same order as the masks.
         # This is however important later on, so something needs to be done to achieve
         # this. For now this is handled by load image gt
-        return fin_pose, class_ids
+        return fin_pose, class_ids, intrinsic_matrix
 
 ########################################################################################################################
 #                                                      Backbone                                                        #
@@ -301,7 +302,7 @@ class YCBVConfig(Config):
 
     LEARNING_RATE = 0.005
     ESTIMATE_6D_POSE = True
-    XYZ_MODEL_PATH = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl"
+    XYZ_MODEL_PATH = os.path.join(os.path.expanduser("~"), "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl")
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4

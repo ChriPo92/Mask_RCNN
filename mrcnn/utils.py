@@ -391,7 +391,7 @@ class Dataset(object):
                 one pose per instance.
             class_ids: a 1D array of class IDs of the instance masks.
         """
-        return None
+        return None, None, None
 
 def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square"):
     """Resizes an image keeping the aspect ratio unchanged.
@@ -521,6 +521,56 @@ def resize_mask(mask, scale, padding, crop=None):
         mask = np.pad(mask, padding, mode='constant', constant_values=0)
     return mask
 
+def transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop=None):
+    """
+    Creates a pose with a relative translation between 0 and 1 with
+    t_x = pixel range in x dimension of the image
+    t_y = pixel range in y dimension of the image
+    t_z = depth_range in the z direction/channel (image[:, :, 3])
+    :param image:
+    :param pose:
+    :param camera_matrix:
+    :return:
+    """
+    assert scale == 1 and crop is None, "Pose Estimation does not yet support scaling and cropping"
+    top = padding[0][0]
+    left = padding[1][0]
+    shape = pose.shape
+    offset = np.array([left, top, 0])
+    camera_offset = np.expand_dims(np.matmul(np.linalg.inv(intrinsic_matrix), offset), axis=-1)
+    pose[:3, 3, :] = pose[:3, 3, :] + np.tile(camera_offset, (1, shape[-1]))
+    return pose
+
+
+def create_camera_matrix_from_intrinsic_matrix(intrinsic_matrix, scale, padding, crop=None):
+    """
+    Since the image is resized and cropped (?) in the beginning, the intrinsic matrix alone is not
+    enough to calculate the poses from pixel coordinates and therefore has to be transformed
+
+    :param intrinsic_matrix: [3, 3] floats
+    :param scale: float
+    :param padding: [(top, bottom), (left, right), (0, 0)]
+    :param crop: [y, x, h, w]
+    :return:
+    TODO: incorporate crop
+    """
+    assert crop is None
+    top = padding[0][0]
+    left = padding[1][0]
+    camera_matrix = np.zeros((4, 4))
+    """ create camera matrix
+    [[scale * fx, 0, scale * x_0, left],
+     [0 , scale * fy, scale * y_0, top],
+     [0, 0, 1, 0], 
+     [0, 0, 0, 1]]
+    """
+    camera_matrix[0, :3] = intrinsic_matrix[0, :] * scale
+    camera_matrix[1, :3] = intrinsic_matrix[1, :] * scale
+    camera_matrix[2, 2] = 1
+    camera_matrix[0, 3] = left
+    camera_matrix[1, 3] = top
+    camera_matrix[3, 3] = 1
+    return camera_matrix
 
 def minimize_mask(bbox, mask, mini_shape):
     """Resize masks to a smaller version to reduce memory load.
