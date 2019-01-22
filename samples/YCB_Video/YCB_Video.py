@@ -168,15 +168,16 @@ class YCBVDataset(utils.Dataset):
         """Load the specified image and return a [H,W,3] Numpy array.
         """
         # Load image
-        image = skimage.io.imread(self.image_info[image_id]['path'])
+        image = cv2.imread(self.image_info[image_id]['path'])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         # If grayscale. Convert to RGB for consistency.
         if image.ndim != 3:
-            image = skimage.color.gray2rgb(image)
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB) 
         # If has an alpha channel, remove it for consistency
         if image.shape[-1] == 4:
             image = image[..., :3]
         if self.use_rgbd:
-            depth = skimage.io.imread(self.image_info[image_id]['depth'])
+            depth = cv2.imread(self.image_info[image_id]['depth'], 0)
             image = np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)
         return image
 

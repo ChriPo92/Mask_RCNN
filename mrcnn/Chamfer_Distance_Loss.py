@@ -91,7 +91,7 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
     reduced_sum2 = KL.Lambda(lambda y: tf.reduce_sum(y), name="reduced_sum2")(dis2)
     added_sum = KL.Lambda(lambda y: y[0] + y[1], name="added_reduced_sum")([reduced_sum1, reduced_sum2])
     loss = KL.Lambda(lambda y: tf.math.xdivy(y[0], tf.cast(2 * y[1], "float32")),
-                     name="chamfer_loss")([added_sum, total_number_of_points])
+                     name="mrcnn_chamfer_loss")([added_sum, total_number_of_points])
     return loss
 
 
