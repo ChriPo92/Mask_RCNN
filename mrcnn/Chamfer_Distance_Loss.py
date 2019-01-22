@@ -116,11 +116,15 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
                               name="transposed_target_models")([target_rot, pos_obj_models])
     target_models = KL.Add(name="added_target_models")([target_models, target_trans])
     dis1, ind1, dis2, ind2 = NNDistance(name="NNDistance")([pred_models, target_models])
-    reduced_sum1 = KL.Lambda(lambda y: tf.reduce_sum(y), name="reduced_sum1")(dis1)
-    reduced_sum2 = KL.Lambda(lambda y: tf.reduce_sum(y), name="reduced_sum2")(dis2)
-    added_sum = KL.Lambda(lambda y: y[0] + y[1], name="added_reduced_sum")([reduced_sum1, reduced_sum2])
-    loss = KL.Lambda(lambda y: tf.math.xdivy(y[0], tf.cast(2 * y[1], "float32")),
-                     name="mrcnn_chamfer_loss")([added_sum, total_number_of_points])
+    reduced_mean1 = KL.Lambda(lambda y: tf.reduce_mean(y, axis=1, keepdims=True),
+                              name="reduced_mean1")(dis1)
+    reduced_mean2 = KL.Lambda(lambda y: tf.reduce_mean(y, axis=1, keepdims=True),
+                              name="reduced_mean2")(dis2)
+    added_sum = KL.Lambda(lambda y: y[0] + y[1],
+                          name="added_reduced_sum")([reduced_mean1, reduced_mean2])
+    # loss = KL.Lambda(lambda y: tf.math.xdivy(y[0], tf.cast(2 * y[1], "float32")),
+    #                  name="mrcnn_chamfer_loss")([added_sum, total_number_of_points])
+    loss = KL.Lambda(lambda y: tf.math.sqrt(y), name="mrcnn_chamfer_loss")(added_sum)
     return loss
 
 
