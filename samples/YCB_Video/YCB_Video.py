@@ -302,6 +302,7 @@ class YCBVConfig(Config):
 
     LEARNING_RATE = 0.005
     ESTIMATE_6D_POSE = True
+    POSE_ESTIMATION_METHOD = "image_features"
     XYZ_MODEL_PATH = os.path.join(os.path.expanduser("~"), "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl")
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)

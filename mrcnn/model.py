@@ -1279,7 +1279,7 @@ class FeaturePointCloud(KE.Layer):
         return output_shape
 
 
-def build_fpn_pointnet_transl_graph(rois, feature_maps, depth_image, image_meta,
+def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
                                     config, pool_size=24, train_bn=True):
     """Builds the computation graph of the pose estimation head of Feature Pyramid Network.
 
@@ -1299,7 +1299,7 @@ def build_fpn_pointnet_transl_graph(rois, feature_maps, depth_image, image_meta,
     x, d = PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
                            name="roi_align_pose")([rois, image_meta] + feature_maps)
     # pcl_list = [batch, num_rois, h*w, (x, y, z)], feature_list = [batch, num_rois, h*w, channels]
-    pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size))(rois, x, d)
+    pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size), name="FeaturePointCloud")([rois, x, d])
     # transfrom to [batch, num_rois, h*w, (x, y, z), 1]
     pcl_list = K.expand_dims(pcl_list, -1)
     # expand to [batch, num_rois, h*w, channels, 1]
@@ -1309,11 +1309,21 @@ def build_fpn_pointnet_transl_graph(rois, feature_maps, depth_image, image_meta,
                            name="mrcnn_pose_feature_conv")(feature_list)
     # merge to [batch, num_rois, h*w, 7, 1]
     point_cloud_repr = KL.merge.concatenate(pcl_list, feature_list, axis=-2)
-    # transform to [batch, num_rois, h*w, 1, 64]
-    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 7), padding="valid"),
+    # transform to [batch, num_rois, h*w, 6, 16]
+    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
                            name="mrcnn_pose_conv1")(point_cloud_repr)
-    x = KL.TimeDistributed(BatchNorm(),
+    point_cloud_repr = KL.TimeDistributed(BatchNorm(),
                            name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
+    # transform to [batch, num_rois, h*w, 4, 32]
+    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
+                                          name="mrcnn_pose_conv1")(point_cloud_repr)
+    point_cloud_repr = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
+    # transform to [batch, num_rois, h*w, 1, 64]
+    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
+                                          name="mrcnn_pose_conv1")(point_cloud_repr)
+    point_cloud_repr = KL.TimeDistributed(BatchNorm(),
+                                          name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch, num_rois, h*w, 1, 256]
     x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
@@ -2465,9 +2475,20 @@ class MaskRCNN():
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
             if config.ESTIMATE_6D_POSE:
-                mrcnn_pose_trans, mrcnn_pose_rot = build_fpn_pose_graph(rois, mrcnn_feature_maps,
-                                                  input_depth, input_image_meta,
-                                                  config.NUM_CLASSES, config.TRAIN_BN)
+                mrcnn_pose_trans, mrcnn_pose_rot = None, None
+                if config.POSE_ESTIMATION_METHOD in ["image_features", "both"]:
+                    mrcnn_pose_trans, mrcnn_pose_rot = build_fpn_pose_graph(rois, mrcnn_feature_maps,
+                                                      input_depth, input_image_meta,
+                                                      config.NUM_CLASSES, config.TRAIN_BN)
+                if config.POSE_ESTIMATION_METHOD in ["pointnet", "both"]:
+                    point_pose_trans, point_pose_rot = build_fpn_pointnet_pose_graph(rois, mrcnn_feature_maps,
+                                                      input_depth, input_image_meta, config, 24, config.TRAIN_BN)
+                    if mrcnn_pose_rot is None and mrcnn_pose_trans is None:
+                        mrcnn_pose_trans = point_pose_trans
+                        mrcnn_pose_rot = point_pose_rot
+                    else:
+                        mrcnn_pose_trans = KL.Add(name="mrcnn_pose_trans_merged")([mrcnn_pose_trans, point_pose_trans])
+                        mrcnn_pose_rot = KL.Add(name="mrcnn_pose_rot_merged")([mrcnn_pose_rot, point_pose_rot])
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)

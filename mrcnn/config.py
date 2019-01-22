@@ -192,7 +192,7 @@ class Config(object):
         "mrcnn_class_loss": 1.,
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
-        "mrcnn_pose_loss": 0.05
+        "mrcnn_pose_loss": 1.
     }
 
     # Use RPN ROIs or externally generated ROIs for training
@@ -213,6 +213,13 @@ class Config(object):
 
     # enable training of 6D Pose estimation
     ESTIMATE_6D_POSE = False
+
+    # which method is used for the calculation of the rotation and translation
+    # pose; can be one of:
+    #   - image_features --> uses convolutions on the image features
+    #   - pointnet --> uses a pointnet-like architecture
+    #   - both --> uses both and adds the output afterwards
+    POSE_ESTIMATION_METHOD = "image_features"
 
     # use depth-aware operation
     USE_DEPTH_AWARE_OPS = False
@@ -238,6 +245,7 @@ class Config(object):
         # Image meta data length
         # See compose_image_meta() for details
         self.IMAGE_META_SIZE = 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES
+        assert self.POSE_ESTIMATION_METHOD in ["image_features", "pointnet", "both"]
 
     def display(self):
         """Display Configuration values."""
