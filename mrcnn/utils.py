@@ -523,10 +523,7 @@ def resize_mask(mask, scale, padding, crop=None):
 
 def transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop=None):
     """
-    Creates a pose with a relative translation between 0 and 1 with
-    t_x = pixel range in x dimension of the image
-    t_y = pixel range in y dimension of the image
-    t_z = depth_range in the z direction/channel (image[:, :, 3])
+    Creates an effective pose, that incorporates the scaling and padding of the image.
     :param image:
     :param pose:
     :param camera_matrix:
