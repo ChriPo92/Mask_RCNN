@@ -197,14 +197,14 @@ if TEST_MODE is "training":
         ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
         ########### from function - chamfer_distance_loss_keras ###########
         ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
-        ("total_number_of_points", model.keras_model.get_layer("total_number_of_points").output),
+        # ("total_number_of_points", model.keras_model.get_layer("total_number_of_points").output),
         ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
         ("transposed_target_models", model.keras_model.get_layer("transposed_target_models").output),
         ("added_target_models", model.keras_model.get_layer("added_target_models").output),
         ("NNDistance1", model.keras_model.get_layer("NNDistance").output[0]),
         ("NNDistance2", model.keras_model.get_layer("NNDistance").output[2]),
-        ("reduced_sum1", model.keras_model.get_layer("reduced_sum1").output),
-        ("reduced_sum2", model.keras_model.get_layer("reduced_sum2").output),
+        ("reduced_mean1", model.keras_model.get_layer("reduced_mean1").output),
+        ("reduced_mean2", model.keras_model.get_layer("reduced_mean2").output),
         ("added_reduced_sum", model.keras_model.get_layer("added_reduced_sum").output),
         ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output)
     ])
@@ -295,8 +295,8 @@ assert activations["transposed_target_models"].shape == num_positive_ix + (num_x
 assert activations["added_target_models"].shape == num_positive_ix + (num_xyz_points, 3)
 assert activations["NNDistance1"].shape == num_positive_ix + (num_xyz_points, )
 assert activations["NNDistance2"].shape == num_positive_ix + (num_xyz_points, )
-assert activations["reduced_sum1"].shape == tuple()
-assert activations["reduced_sum2"].shape == tuple()
+assert activations["reduced_mean1"].shape == num_positive_ix + (1, )
+assert activations["reduced_mean2"].shape == num_positive_ix + (1, )
 #### equivalency tests
 
 assert np.array_equal(activations["pose_target_class_ids"][:det_count], det_class_ids)
