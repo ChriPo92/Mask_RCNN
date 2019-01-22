@@ -524,18 +524,29 @@ def resize_mask(mask, scale, padding, crop=None):
 def transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop=None):
     """
     Creates an effective pose, that incorporates the scaling and padding of the image.
+    Apparently, it is not enough to translate the padding into camera coordinates, but
+    one has to transform the translations of the pose into pixel coordinates and afterwards
+    add the padding to the pixel translations. After transforming everything back to camera
+    coordinates, the poses seem to fit.
     :param image:
     :param pose:
     :param camera_matrix:
     :return:
     """
     assert scale == 1 and crop is None, "Pose Estimation does not yet support scaling and cropping"
+    translations = pose[:3, 3, :]
+    camera_translations = np.matmul(intrinsic_matrix, translations)
+    # in pixel coordinates
+    hom_camera_trans = camera_translations / camera_translations[2, :]
     top = padding[0][0]
     left = padding[1][0]
     shape = pose.shape
-    offset = np.array([left, top, 0])
-    camera_offset = np.expand_dims(np.matmul(np.linalg.inv(intrinsic_matrix), offset), axis=-1)
-    pose[:3, 3, :] = pose[:3, 3, :] + np.tile(camera_offset, (1, shape[-1]))
+    offset = np.array([left, top, 0]).reshape(3, 1)
+    offset_translations = hom_camera_trans + np.tile(offset, (1, shape[-1]))
+    offset_translations *= camera_translations[2, :]
+    camera_translations = np.expand_dims(np.matmul(np.linalg.inv(intrinsic_matrix),
+                                                   offset_translations), axis=-1)
+    pose[:3, 3, :] = np.squeeze(camera_translations)
     return pose
 
 

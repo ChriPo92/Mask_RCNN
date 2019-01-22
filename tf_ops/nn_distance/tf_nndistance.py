@@ -50,7 +50,7 @@ class NNDistance(Layer):
 
         """
         if type(inputs) is not list or len(inputs) != 2:
-            raise Exception('DAConv2D must be called on a list of 2 tensors'
+            raise Exception('NNDistance must be called on a list of 2 tensors'
                             '. Got: ' + str(inputs))
         xyz1 = inputs[0]
         xyz2 = inputs[1]

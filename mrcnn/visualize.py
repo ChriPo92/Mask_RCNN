@@ -577,6 +577,7 @@ def visualize_poses(image, poses, object_ids, camera_matrix, ax=None):
             ax.plot([p[0, 0], p[1, 0]], [p[0, 1], p[1, 1]], color=color)
             ax.plot([p[0, 0], p[2, 0]], [p[0, 1], p[2, 1]], color=color)
             ax.plot([p[0, 0], p[3, 0]], [p[0, 1], p[3, 1]], color=color)
+    return ax
 
 def visualize_pointcloud_hulls(image, poses, pointclouds, object_ids, camera_matrix, ax=None):
     if ax is None:

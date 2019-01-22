@@ -29,6 +29,35 @@ def create_xyz_dataframe(dataset, path_to_dataset):
                     continue
     return dic
 
+class SVD(KL.Layer):
+    def __init__(self, **kwargs):
+        super(SVD, self).__init__(**kwargs)
+
+    def call(self, input, **kwargs):
+        """
+        Computes the SVD of a tensor
+        input: xyz1: (batch_size,#points_1,3)  the first point cloud
+        input: xyz2: (batch_size,#points_2,3)  the second point cloud
+
+        """
+        outputs = tf.linalg.svd(input)
+        names = ["s", "u", "v"]
+        result = [tf.identity(o, name=n) for o, n in zip(list(outputs), names)]
+        return result
+
+    def get_output_shape_for(self, input_shape):
+        """
+        output: s: (batch_size,?)   distance from first to second
+        output: u:  (batch_size,?, ?)   nearest neighbor from first to second
+        output: v: (batch_size,?, ?)   distance from second to first
+
+        """
+
+        return [input_shape[:-1], input_shape, input_shape]
+
+    def compute_output_shape(self, input_shape):
+        return [input_shape[:-1], input_shape, input_shape]
+
 
 def chamfer_distance_loss(pred_rot, pred_trans, target_rot, target_trans, pos_obj_models):
     """
@@ -211,6 +240,12 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     y_pred_r = KL.Lambda(lambda y: tf.gather_nd(y[0], y[1]),
                          name="mrcnn_pose_loss/y_pred_r", output_shape=(3, 3,))(
                          [pred_rot, indices])  # shape: [pos_ix, 3, 3]
+    # the predicted rotations are not orthogonal, which is needed for rotations
+    # to get an orthoganl matrix from any 3x3 matrix we use an SVD where
+    # a = U * diag(S) * V^h
+    s, u, v = SVD(name="mrcnn_pose_loss/pred_rot_svd")(y_pred_r)
+    y_pred_r = KL.Lambda(lambda y: tf.linalg.matmul(y[0], y[1]),
+                         name="mrcnn_pose_loss/pred_rot_svd_matmul")([u, v])
     pos_xyz_models = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
                                name="mrcnn_pose_loss/pos_xyz_models",
                                output_shape=(3, N,))(
