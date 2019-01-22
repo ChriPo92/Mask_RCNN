@@ -1596,8 +1596,6 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
             return yindex[~mask]
 
         assert augmentation is None, "Augmentation is not supported for Pose Estimation yet"
-        # TODO: make sure that max of pose is smaller than 1, for now that does not work
-        assert np.max(pose) <= 1.6, f"For learning, the maximum number in the pose should not be greater than 1.6, but is {np.max(pose)}"
         sort_ids = order_array_with_respect_to(pclass_ids, class_ids)
         pclass_ids = pclass_ids[sort_ids]
         pose = pose[:, :, sort_ids]
@@ -1606,6 +1604,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         # camera_matrix = utils.create_camera_matrix_from_intrinsic_matrix(intrinsic_matrix, scale, padding, crop)
         # pose = np.transpose(np.matmul(np.transpose(pose, [2, 0, 1]), camera_matrix), [1, 2, 0])
         pose = utils.transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop)
+        assert np.max(pose) <= 2.0, f"For learning, the maximum number in the pose should not be greater than 2, but is {np.max(pose)}"
 
     # Random horizontal flips.
     # TODO: will be removed in a future update in favor of augmentation
