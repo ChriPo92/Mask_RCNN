@@ -98,11 +98,6 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
     """
     # pred_rot_shape = tf.shape(pred_rot)
     # pred_trans_shape = tf.shape(pred_trans)
-    # target_rot_shape = tf.shape(target_rot)
-    # target_trans_shape = tf.shape(target_trans)
-    # pos_obj_models_shape = tf.shape(pos_obj_models)
-    # print_op = tf.print([pred_rot_shape, pred_trans_shape, target_rot_shape, target_trans_shape, pos_obj_models_shape])
-    # with tf.control_dependencies([print_op]):
     pred_models = KL.Lambda(lambda y: tf.transpose(tf.matmul(y[0], y[1]), (0, 2, 1)),
                             name="transposed_pred_models")([pred_rot, pos_obj_models])
     total_number_of_points = KL.Lambda(lambda y: tf.shape(y)[0] * tf.shape(y)[2],
@@ -112,9 +107,9 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
                               name="transposed_target_models")([target_rot, pos_obj_models])
     target_models = KL.Add(name="added_target_models")([target_models, target_trans])
     dis1, ind1, dis2, ind2 = NNDistance(name="NNDistance")([pred_models, target_models])
-    reduced_mean1 = KL.Lambda(lambda y: tf.reduce_mean(y, keepdims=True),
+    reduced_mean1 = KL.Lambda(lambda y: tf.reduce_mean(y),
                               name="reduced_mean1")(dis1)
-    reduced_mean2 = KL.Lambda(lambda y: tf.reduce_mean(y, keepdims=True),
+    reduced_mean2 = KL.Lambda(lambda y: tf.reduce_mean(y),
                               name="reduced_mean2")(dis2)
     added_sum = KL.Lambda(lambda y: y[0] + y[1],
                           name="added_reduced_sum")([reduced_mean1, reduced_mean2])
