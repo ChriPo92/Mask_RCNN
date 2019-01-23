@@ -1247,37 +1247,55 @@ class FeaturePointCloud(KE.Layer):
         self.feature_map_size = tuple(feature_map_size)
 
     def call(self, inputs, **kwargs):
+        # [batch, num_rois, (y1, x1, y2, x2)], [batch, num_rois, 24, 24, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
+        # [batch, num_rois, 24, 24, 1]
         rois, image_features, depth_image = inputs
+        # [batch, num_rois, 1], [batch, num_rois, 1], [batch, num_rois, 1], [batch, num_rois, 1]
         y1, x1, y2, x2 = tf.split(rois, 4, axis=2)
         im_shape = tf.shape(image_features)
         # TODO: this works only as long as the rois have shape 24 x 24
         batch = im_shape[0]
         num_rois = im_shape[1]
-        h = im_shape[2]
-        w = im_shape[3]
+        h = tf.cast(im_shape[2], "float32")
+        w = tf.cast(im_shape[3], "float32")
         channels = im_shape[4]
+        # [width]
         x = tf.range(w)
+        # [height]
         y = tf.range(h)
+        # [h, w], [h, w]
         X, Y = tf.meshgrid(x, y)
-        X = tf.reshape(X, (-1))
-        Y = tf.reshape(X, (-1))
+        # [batch*h, w]; needs to be [batch, 1, h*w]
+        X = tf.tile(X, [batch, 1], name="tiled_X")
+        X = tf.reshape(X, (batch, 1, -1), name="reshape_X")
+        # [batch, 1, h * w]
+        # [1, h*w]
+        Y = tf.tile(Y, [batch, 1], name="tiled_X")
+        Y = tf.reshape(Y, (batch, 1, -1), name="reshape_Y")
+        # [batch, 1, h * w]
+        # [batch, num_rois, 1]
         height_pixel_scale = (y2 - y1) / h
+        # [batch, num_rois, 1]
         width_pixel_scale = (x2 -x1) / w
-        y_im = y1 + (Y * height_pixel_scale)
-        x_im = x1 + (X * width_pixel_scale)
-        z_im = K.reshape(depth_image, (batch, num_rois, -1, 1))
-        positions = tf.concat([x_im, y_im, z_im], axis=-1)
-        features = tf.reshape(image_features, (batch, num_rois, -1, channels))
-        return positions, features
+        # expand_dims([batch, num_rois, 1] + [batch, num_rois, h*w]) =! [batch, num_rois, h*w, 1]
+        y_im = tf.expand_dims(y1 + tf.linalg.matmul(height_pixel_scale, Y), axis=-1)
+        x_im = tf.expand_dims(x1 + tf.linalg.matmul(width_pixel_scale, X), axis=-1)
+        # [batch, num_rois, h*w, 1]
+        z_im = tf.reshape(depth_image, (batch, num_rois, -1, 1), name="z_im")
+        # [batch, num_rois, h*w, 3]
+        positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
+        positions = tf.reshape(positions, (batch, num_rois, -1, 3))
+        # [batch, num_rois, h*w, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
+        features = tf.reshape(image_features, (batch, num_rois, -1, channels), name="reshape_features")
+        return [positions, features]
 
     def compute_output_shape(self, input_shape):
         rois_shape = input_shape[0]
         image_shape = input_shape[1]
         feature_maps = self.feature_map_size[0] * self.feature_map_size[1]
         output_shape = [(rois_shape[:2]) +(feature_maps, 3),
-                        image_shape[:2] + ((feature_maps, ) + image_shape[-1])]
+                        image_shape[:2] + (feature_maps, image_shape[-1])]
         return output_shape
-
 
 def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
                                     config, pool_size=24, train_bn=True):
@@ -1305,10 +1323,10 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
     # expand to [batch, num_rois, h*w, channels, 1]
     feature_list = K.expand_dims(feature_list, -1)
     # transform to [batch, num_rois, h*w, 4, 1]
-    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, config.TOP_DOWN_PYRAMID_SIZE / 4), padding="valid"),
+    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, int(config.TOP_DOWN_PYRAMID_SIZE / 4)), padding="valid"),
                            name="mrcnn_pose_feature_conv")(feature_list)
     # merge to [batch, num_rois, h*w, 7, 1]
-    point_cloud_repr = KL.merge.concatenate(pcl_list, feature_list, axis=-2)
+    point_cloud_repr = KL.merge.concatenate([pcl_list, feature_list], axis=-2)
     # transform to [batch, num_rois, h*w, 6, 16]
     point_cloud_repr = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
                            name="mrcnn_pose_conv1")(point_cloud_repr)
@@ -1324,7 +1342,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
                                           name="mrcnn_pose_conv1")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
                                           name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
-    x = KL.Activation('relu')(x)
+    x = KL.Activation('relu')(point_cloud_repr)
     # transform to [batch, num_rois, h*w, 1, 256]
     x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
                            name="mrcnn_pose_conv2")(x)
