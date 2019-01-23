@@ -96,15 +96,15 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
     :param pos_obj_models: [N, 3, num_points]
     :return:
     """
-    # pred_rot_shape = tf.shape(pred_rot)
-    # pred_trans_shape = tf.shape(pred_trans)
-    # target_rot_shape = tf.shape(target_rot)
-    # target_trans_shape = tf.shape(target_trans)
-    # pos_obj_models_shape = tf.shape(pos_obj_models)
-    # print_op = tf.print([pred_rot_shape, pred_trans_shape, target_rot_shape, target_trans_shape, pos_obj_models_shape])
-    # with tf.control_dependencies([print_op]):
-    pred_models = KL.Lambda(lambda y: tf.transpose(tf.matmul(y[0], y[1]), (0, 2, 1)),
-                            name="transposed_pred_models")([pred_rot, pos_obj_models])
+    pred_rot_shape = tf.shape(pred_rot)
+    pred_trans_shape = tf.shape(pred_trans)
+    target_rot_shape = tf.shape(target_rot)
+    target_trans_shape = tf.shape(target_trans)
+    pos_obj_models_shape = tf.shape(pos_obj_models)
+    print_op = tf.print([pred_rot_shape, pred_trans_shape, target_rot_shape, target_trans_shape, pos_obj_models_shape])
+    with tf.control_dependencies([print_op]):
+        pred_models = KL.Lambda(lambda y: tf.transpose(tf.matmul(y[0], y[1]), (0, 2, 1)),
+                                name="transposed_pred_models")([pred_rot, pos_obj_models])
     total_number_of_points = KL.Lambda(lambda y: tf.shape(y)[0] * tf.shape(y)[2],
                                        name="total_number_of_points")(pos_obj_models)
     pred_models = KL.Add(name="added_pred_models")([pred_models, pred_trans])
@@ -117,7 +117,7 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
     reduced_mean2 = KL.Lambda(lambda y: tf.reduce_mean(y, keepdims=True),
                               name="reduced_mean2")(dis2)
     added_sum = KL.Lambda(lambda y: y[0] + y[1],
-                          name="added_reduced_sum")([reduced_mean1, reduced_mean2])
+                          name="added_reduced_mean")([reduced_mean1, reduced_mean2])
     # loss = KL.Lambda(lambda y: tf.math.xdivy(y[0], tf.cast(2 * y[1], "float32")),
     #                  name="mrcnn_chamfer_loss")([added_sum, total_number_of_points])
     loss = KL.Lambda(lambda y: tf.math.sqrt(y), name="mrcnn_chamfer_loss")(added_sum)

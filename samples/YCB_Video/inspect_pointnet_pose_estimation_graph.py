@@ -158,27 +158,32 @@ intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center =
 
 if TEST_MODE is "training":
     activations = model.run_trainings_graph(dataset, image_id, [
-        ("roi_align_pose_image", model.keras_model.get_layer("roi_align_pose").output[0]),
-        ("roi_align_pose_depth", model.keras_model.get_layer("roi_align_pose").output[1]),
-        ("rois_trans_deconv", model.keras_model.get_layer("mrcnn_pose_rois_trans_deconv").output),  # for resnet100
-        ("rois_trans_conv", model.keras_model.get_layer("mrcnn_pose_rois_trans_conv").output),
         ("detections", model.keras_model.get_layer("proposal_targets").output[0]),
         ("target_class_ids", model.keras_model.get_layer("proposal_targets").output[1]),
         ("target_poses", model.keras_model.get_layer("proposal_targets").output[4]),
-        ("pose_conv1", model.keras_model.get_layer("mrcnn_pose_conv1").output),
-        ("pose_conv4", model.keras_model.get_layer("mrcnn_pose_conv4").output),
-        ("pose_conv5", model.keras_model.get_layer("mrcnn_pose_conv5").output),
-        ("trans_conva", model.keras_model.get_layer("mrcnn_pose_trans_conva").output),
-        ("trans_convb", model.keras_model.get_layer("mrcnn_pose_trans_convb").output),
-        ("trans_squeeze", model.keras_model.get_layer("mrcnn_pose_trans_squeeze").output),
-        ("rot_conva", model.keras_model.get_layer("mrcnn_pose_rot_conva").output),
-        ("rot_convb", model.keras_model.get_layer("mrcnn_pose_rot_convb").output),
         ("mrcnn_class", model.keras_model.get_layer("mrcnn_class").output),
         ("mrcnn_bbox", model.keras_model.get_layer("mrcnn_bbox").output),
         ("mrcnn_class_logits", model.keras_model.get_layer("mrcnn_class_logits").output),
-        # ("mrcnn_pose_loss", model.keras_model.get_layer("mrcnn_pose_loss").output),
+        ######## from function - build_fpn_pointnet_pose_graph ############
+        ("pcl_list", model.keras_model.get_layer("FeaturePointCloud").output[0]),
+        ("feature_list", model.keras_model.get_layer("FeaturePointCloud").output[1]),
+        ("roi_align_pose_image", model.keras_model.get_layer("roi_align_pointnet_pose").output[0]),
+        ("roi_align_pose_depth", model.keras_model.get_layer("roi_align_pointnet_pose").output[1]),
+        ("expand_pcl_list", model.keras_model.get_layer("expand_pcl_list").output),
+        ("expand_feature_list", model.keras_model.get_layer("expand_feature_list").output),
+        ("mrcnn_pose_feature_conv", model.keras_model.get_layer("mrcnn_pose_feature_conv").output),
+        ("point_cloud_repr_concat", model.keras_model.get_layer("point_cloud_repr_concat").output),
+        ("pose_conv1", model.keras_model.get_layer("mrcnn_pointnet_pose_conv1").output),
+        ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_pose_conv2").output),
+        ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_pose_conv3").output),
+        ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_pose_conv4").output),
+        ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_pose_conv5").output),
+        ("sym_max_pool", model.keras_model.get_layer("mrcnn_pose_sym_max_pool").output),
+        ("rot_deconv", model.keras_model.get_layer("mrcnn_pose_rot_deconv").output),
+        ("rot_conv", model.keras_model.get_layer("mrcnn_pose_rot_conv").output),
+        ("trans_deconv", model.keras_model.get_layer("mrcnn_pose_trans_deconv").output),
+        ("trans_conv", model.keras_model.get_layer("mrcnn_pose_trans_conv").output),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
-        # ("mrcnn_pose_loss", model.keras_model.get_layer("mrcnn_pose_loss/loss").output),
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").output),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").output),
         ("pose_target_trans", model.keras_model.get_layer("mrcnn_pose_loss/target_trans").output),
@@ -195,16 +200,15 @@ if TEST_MODE is "training":
         ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
         ########### from function - chamfer_distance_loss_keras ###########
         ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
-        ("total_number_of_points", model.keras_model.get_layer("total_number_of_points").output),
         ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
         ("transposed_target_models", model.keras_model.get_layer("transposed_target_models").output),
         ("added_target_models", model.keras_model.get_layer("added_target_models").output),
         ("NNDistance1", model.keras_model.get_layer("NNDistance").output[0]),
         ("NNDistance2", model.keras_model.get_layer("NNDistance").output[2]),
-        ("reduced_sum1", model.keras_model.get_layer("reduced_sum1").output),
-        ("reduced_sum2", model.keras_model.get_layer("reduced_sum2").output),
-        ("added_reduced_sum", model.keras_model.get_layer("added_reduced_sum").output),
-        ("chamfer_loss", model.keras_model.get_layer("chamfer_loss").output)
+        ("reduced_sum1", model.keras_model.get_layer("reduced_mean1").output),
+        ("reduced_sum2", model.keras_model.get_layer("reduced_mean2").output),
+        ("added_reduced_sum", model.keras_model.get_layer("added_reduced_mean").output),
+        ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output)
     ])
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
 
