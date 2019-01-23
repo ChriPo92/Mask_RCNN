@@ -45,17 +45,13 @@ class SVD(KL.Layer):
         result = [tf.identity(o, name=n) for o, n in zip(list(outputs), names)]
         return result
 
-    def get_output_shape_for(self, input_shape):
-        """
-        output: s: (batch_size,?)   distance from first to second
-        output: u:  (batch_size,?, ?)   nearest neighbor from first to second
-        output: v: (batch_size,?, ?)   distance from second to first
-
-        """
-
-        return [input_shape[:-1], input_shape, input_shape]
-
     def compute_output_shape(self, input_shape):
+        """
+               output: s: (batch_size,?)   distance from first to second
+               output: u:  (batch_size,?, ?)   nearest neighbor from first to second
+               output: v: (batch_size,?, ?)   distance from second to first
+
+        """
         return [input_shape[:-1], input_shape, input_shape]
 
 
@@ -116,9 +112,9 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
                               name="transposed_target_models")([target_rot, pos_obj_models])
     target_models = KL.Add(name="added_target_models")([target_models, target_trans])
     dis1, ind1, dis2, ind2 = NNDistance(name="NNDistance")([pred_models, target_models])
-    reduced_mean1 = KL.Lambda(lambda y: tf.reduce_mean(y, axis=1, keepdims=True),
+    reduced_mean1 = KL.Lambda(lambda y: tf.reduce_mean(y, keepdims=True),
                               name="reduced_mean1")(dis1)
-    reduced_mean2 = KL.Lambda(lambda y: tf.reduce_mean(y, axis=1, keepdims=True),
+    reduced_mean2 = KL.Lambda(lambda y: tf.reduce_mean(y, keepdims=True),
                               name="reduced_mean2")(dis2)
     added_sum = KL.Lambda(lambda y: y[0] + y[1],
                           name="added_reduced_sum")([reduced_mean1, reduced_mean2])
