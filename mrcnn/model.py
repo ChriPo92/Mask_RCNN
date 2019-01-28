@@ -1165,7 +1165,7 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
     x, d = PyramidROIAlign([24, 24], depth_image=depth_image,
-                        name="roi_align_pose")([rois, image_meta] + feature_maps)
+                        name="roi_align_feature_pose")([rois, image_meta] + feature_maps)
     rois_trans = KL.Lambda(lambda y: tf.expand_dims(tf.expand_dims(y, axis=-1), axis=-1))(rois)
     rois_trans = KL.TimeDistributed(KL.Deconv2D(16, (1, 2), padding="valid"),
                                     name="mrcnn_pose_rois_trans_deconv")(rois_trans)
@@ -1244,7 +1244,7 @@ class FeaturePointCloud(KE.Layer):
         :return: [batch, num_rois, h*w, (x, y, z)], [batch, num_rois, h*w, channels]
         """
         super(FeaturePointCloud, self).__init__(**kwargs)
-        self.feature_map_size = tuple(feature_map_size)
+        self.feature_map_size = feature_map_size
 
     def call(self, inputs, **kwargs):
         # [batch, num_rois, (y1, x1, y2, x2)], [batch, num_rois, 24, 24, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
@@ -1259,6 +1259,8 @@ class FeaturePointCloud(KE.Layer):
         h = tf.cast(im_shape[2], "float32")
         w = tf.cast(im_shape[3], "float32")
         channels = im_shape[4]
+        # print_op = tf.print([batch, num_rois, h, w, channels])
+        # with tf.control_dependencies([print_op]):
         # [width]
         x = tf.range(w)
         # [height]
@@ -1278,14 +1280,41 @@ class FeaturePointCloud(KE.Layer):
         # [batch, num_rois, 1]
         width_pixel_scale = (x2 -x1) / w
         # expand_dims([batch, num_rois, 1] + [batch, num_rois, h*w]) =! [batch, num_rois, h*w, 1]
-        y_im = tf.expand_dims(y1 + tf.linalg.matmul(height_pixel_scale, Y), axis=-1)
-        x_im = tf.expand_dims(x1 + tf.linalg.matmul(width_pixel_scale, X), axis=-1)
-        # [batch, num_rois, h*w, 1]
         z_im = tf.reshape(depth_image, (batch, num_rois, -1, 1), name="z_im")
+        y_im = tf.expand_dims(y1 + tf.linalg.matmul(height_pixel_scale, Y), axis=-1)
+        # y_im = (y_im * self.full_image_size[0] - self.intrinsic_matrix[1, 2]) * z_im / self.intrinsic_matrix[1, 1]
+        x_im = tf.expand_dims(x1 + tf.linalg.matmul(width_pixel_scale, X), axis=-1)
+        # x_im = (x_im * self.full_image_size[1] - self.intrinsic_matrix[0, 2]) * z_im / self.intrinsic_matrix[0, 0]
+        # [batch, num_rois, h*w, 1]
+        # filter out all elements which have z == 0
+        mask = tf.greater(z_im, 0., name="depth_mask")
+        # x_im = tf.boolean_mask(x_im, mask)
+        # y_im = tf.boolean_mask(y_im, mask)
+        masked_z_im = tf.boolean_mask(z_im, mask)
+        # rescales z to be between 0...1 for each batch, excluding the depth points == 0
+        # reshapes z_im to [batch, num_rois*w*h], then takes then min/max along dimension 1
+        # to result in an tensor of shape [batch]
+        # TODO: investigate why the shapes seem to be caved in instead of the right direction
+        z_im = tf.div(
+            tf.subtract(
+                z_im,
+                tf.reduce_min(
+                    tf.reshape(masked_z_im, (batch, -1)),
+                    axis=1)
+            ),
+            tf.subtract(
+                tf.reduce_max(
+                    tf.reshape(z_im, (batch, -1)),
+                    axis=1),
+                tf.reduce_min(
+                    tf.reshape(masked_z_im, (batch, -1)),
+                    axis=1)
+            )
+        )
         # [batch, num_rois, h*w, 3]
         positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
         positions = tf.reshape(positions, (batch, num_rois, -1, 3))
-        # [batch, num_rois, h*w, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
+        # [batch, num_rois, h*w, config.FEATURE_PYRAMID_TOP_DOWN_SIZE]
         features = tf.reshape(image_features, (batch, num_rois, -1, channels), name="reshape_features")
         return [positions, features]
 
@@ -1315,59 +1344,70 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
     x, d = PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
-                           name="roi_align_pose")([rois, image_meta] + feature_maps)
-    # pcl_list = [batch, num_rois, h*w, (x, y, z)], feature_list = [batch, num_rois, h*w, channels]
-    pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size), name="FeaturePointCloud")([rois, x, d])
+                           name="roi_align_pointnet_pose")([rois, image_meta] + feature_maps)
+    # pcl_list = [batch, num_rois, h*w(576), (x, y, z)], feature_list = [batch, num_rois, h*w, channels]
+    pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size),
+                                               name="FeaturePointCloud")([rois, x, d])
     # transfrom to [batch, num_rois, h*w, (x, y, z), 1]
-    pcl_list = K.expand_dims(pcl_list, -1)
+    pcl_list = KL.Lambda(lambda y: tf.expand_dims(y, -1), name="expand_pcl_list")(pcl_list)
     # expand to [batch, num_rois, h*w, channels, 1]
-    feature_list = K.expand_dims(feature_list, -1)
+    feature_list = KL.Lambda(lambda y: tf.expand_dims(y, -1), name="expand_feature_list")(feature_list)
     # transform to [batch, num_rois, h*w, 4, 1]
-    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, int(config.TOP_DOWN_PYRAMID_SIZE / 4)), padding="valid"),
-                           name="mrcnn_pose_feature_conv")(feature_list)
-    # merge to [batch, num_rois, h*w, 7, 1]
-    point_cloud_repr = KL.merge.concatenate([pcl_list, feature_list], axis=-2)
-    # transform to [batch, num_rois, h*w, 6, 16]
+    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, int(config.TOP_DOWN_PYRAMID_SIZE / 4)),
+                                                padding="valid",
+                                                strides=(1, int(config.TOP_DOWN_PYRAMID_SIZE / 4))),
+                                      name="mrcnn_pose_feature_conv")(feature_list)
+    # merge to [batch, num_rois, h*w(576), 7, 1]
+    print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
+    point_cloud_repr = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
+                                 name="point_cloud_repr_concat")([pcl_list, feature_list])
+    # transform to [batch, num_rois, h*w(576), 6, 16]
     point_cloud_repr = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
-                           name="mrcnn_pose_conv1")(point_cloud_repr)
+                                          name="mrcnn_pointnet_pose_conv1")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
-    # transform to [batch, num_rois, h*w, 4, 32]
+                                          name='mrcnn_pointnet_pose_bn1')(point_cloud_repr, training=train_bn)
+    # transform to [batch, num_rois, h*w(576), 4, 32]
     point_cloud_repr = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
-                                          name="mrcnn_pose_conv1")(point_cloud_repr)
+                                          name="mrcnn_pointnet_pose_conv2")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
-    # transform to [batch, num_rois, h*w, 1, 64]
+                                          name='mrcnn_pointnet_pose_bn2')(point_cloud_repr, training=train_bn)
+    # transform to [batch, num_rois, h*w(576), 1, 64]
     point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
-                                          name="mrcnn_pose_conv1")(point_cloud_repr)
+                                          name="mrcnn_pointnet_pose_conv3")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
-                                          name='mrcnn_pose_bn1')(point_cloud_repr, training=train_bn)
+                                          name='mrcnn_pointnet_pose_bn3')(point_cloud_repr, training=train_bn)
     x = KL.Activation('relu')(point_cloud_repr)
-    # transform to [batch, num_rois, h*w, 1, 256]
+    # transform to [batch, num_rois, h*w(576), 1, 256]
     x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
-                           name="mrcnn_pose_conv2")(x)
+                           name="mrcnn_pointnet_pose_conv4")(x)
     x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn2')(x, training=train_bn)
+                           name='mrcnn_pointnet_pose_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, h*w, 1, 1024]
+    # transform to [batch, num_rois, h*w(576), 1, 1024]
     x = KL.TimeDistributed(KL.Conv2D(1024, (1, 1), padding="valid"),
-                           name="mrcnn_pose_conv3")(x)
+                           name="mrcnn_pointnet_pose_conv5")(x)
     x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pose_bn3')(x, training=train_bn)
+                           name='mrcnn_pointnet_pose_bn5')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch, num_rois, 1, 1, 1024]
     shared = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
                                 name="mrcnn_pose_sym_max_pool")(x)
-    # transform to [batch, num_rois, 3, 1, 256] ?
-    rot = KL.TimeDistributed(KL.Deconv2D(256, (3, 3)),
-                           name="mrcnn_pose_rot_deconv")(shared)
-    rot = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="sigmoid"),
-                           name="mrcnn_pose_rot_conv")(rot)
     # transform to [batch, num_rois, 3, 3, 256] ?
+    rot = KL.TimeDistributed(KL.Deconv2D(256, (3, 3)),
+                             name="mrcnn_pose_rot_deconv")(shared)
+    # [batch, num_rois, 3, 3, num_classes]
+    rot = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="tanh"),
+                             name="mrcnn_pose_rot_conv")(rot)
+    # transform to [batch, num_rois, 3, 1, 256] ?
     trans = KL.TimeDistributed(KL.Deconv2D(256, (3, 1)),
-                           name="mrcnn_pose_trans_deconv")(shared)
-    trans = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="sigmoid"),
+                               name="mrcnn_pose_trans_deconv")(shared)
+    # [batch, num_rois, 3, 1, num_classes]
+    trans = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="tanh"),
                                name="mrcnn_pose_trans_conv")(trans)
+    # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
+    #                      tf.shape(x), tf.shape(shared), rot, trans])
+    # with tf.control_dependencies([print_op]):
+    #     rot = KL.Lambda(lambda y: tf.identity(y), name="pose_identity_op")(rot)
     return trans, rot
 
 ############################################################

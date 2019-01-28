@@ -159,8 +159,8 @@ if TEST_MODE is "inference":
 
 if TEST_MODE is "training":
     activations = model.run_trainings_graph(dataset, image_id, [
-        ("roi_align_pose_image", model.keras_model.get_layer("roi_align_pose").output[0]),
-        ("roi_align_pose_depth", model.keras_model.get_layer("roi_align_pose").output[1]),
+        ("roi_align_pose_image", model.keras_model.get_layer("roi_align_feature_pose").output[0]),
+        ("roi_align_pose_depth", model.keras_model.get_layer("roi_align_feature_pose").output[1]),
         ("rois_trans_deconv", model.keras_model.get_layer("mrcnn_pose_rois_trans_deconv").output),  # for resnet100
         ("rois_trans_conv", model.keras_model.get_layer("mrcnn_pose_rois_trans_conv").output),
         ("detections", model.keras_model.get_layer("proposal_targets").output[0]),
@@ -205,7 +205,7 @@ if TEST_MODE is "training":
         ("NNDistance2", model.keras_model.get_layer("NNDistance").output[2]),
         ("reduced_mean1", model.keras_model.get_layer("reduced_mean1").output),
         ("reduced_mean2", model.keras_model.get_layer("reduced_mean2").output),
-        ("added_reduced_sum", model.keras_model.get_layer("added_reduced_sum").output),
+        ("added_reduced_sum", model.keras_model.get_layer("added_reduced_mean").output),
         ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output)
     ])
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
@@ -295,8 +295,8 @@ assert activations["transposed_target_models"].shape == num_positive_ix + (num_x
 assert activations["added_target_models"].shape == num_positive_ix + (num_xyz_points, 3)
 assert activations["NNDistance1"].shape == num_positive_ix + (num_xyz_points, )
 assert activations["NNDistance2"].shape == num_positive_ix + (num_xyz_points, )
-assert activations["reduced_mean1"].shape == num_positive_ix + (1, )
-assert activations["reduced_mean2"].shape == num_positive_ix + (1, )
+assert activations["reduced_mean1"].shape == tuple()
+assert activations["reduced_mean2"].shape == tuple()
 #### equivalency tests
 
 assert np.array_equal(activations["pose_target_class_ids"][:det_count], det_class_ids)
@@ -351,9 +351,9 @@ r = np.matmul(u, vh)
 # TODO: this should be the same somehow, but tf return the adjoint of v and np does not
 # still they should be the same if tf.linalg.matmul(u,v, adjoint_b=True) is used, but its not
 # np.testing.assert_allclose(r, activations["pose_pred_rot_svd_matmul"], rtol=1e-3)
-concat_poses = np.concatenate([activations["pose_pred_rot_svd_matmul"],
+concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
-visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix)
+visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
 target_pc = o3d.PointCloud()
 target_pc.points = o3d.Vector3dVector(activations["added_target_models"].reshape(-1, 3))
 pred_pc = o3d.PointCloud()
