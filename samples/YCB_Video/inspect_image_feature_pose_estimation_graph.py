@@ -351,9 +351,9 @@ r = np.matmul(u, vh)
 # TODO: this should be the same somehow, but tf return the adjoint of v and np does not
 # still they should be the same if tf.linalg.matmul(u,v, adjoint_b=True) is used, but its not
 # np.testing.assert_allclose(r, activations["pose_pred_rot_svd_matmul"], rtol=1e-3)
-concat_poses = np.concatenate([activations["pose_pred_rot_svd_matmul"],
+concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
-visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix)
+visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
 target_pc = o3d.PointCloud()
 target_pc.points = o3d.Vector3dVector(activations["added_target_models"].reshape(-1, 3))
 pred_pc = o3d.PointCloud()

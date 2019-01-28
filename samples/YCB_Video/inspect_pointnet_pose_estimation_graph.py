@@ -32,6 +32,7 @@ from samples.YCB_Video.Test_Pose_Estimation import calculate_2d_hull_of_pointclo
 import mrcnn.model as modellib
 from mrcnn.model import log
 from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_model
+import open3d as o3d
 
 # Directory to save logs and trained model
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
@@ -111,7 +112,7 @@ model = modellib.MaskRCNN(mode=TEST_MODE, model_dir=MODEL_DIR,
                           config=config)
 
 # Load weights
-# model.load_weights(MODEL_PATH, by_name=True)
+model.load_weights(MODEL_PATH, by_name=True)
 
 # ## Run Detection
 
@@ -197,6 +198,7 @@ if TEST_MODE is "training":
         ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").output),
         ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").output),
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
+        ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
         ########### from function - chamfer_distance_loss_keras ###########
         ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
@@ -241,64 +243,49 @@ for i, ax in enumerate(fig.axes):
         ax.imshow(activations["roi_align_pose_image"][0, roi, :, :, i - 1])
 
 intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos(info["id"])
-# fig, axes = plt.subplots(1, 2)
-# visualize.draw_boxes(image[:, :, :3], utils.denorm_boxes(detections[:, :4], image.shape[:2]),  ax=axes[0])
 
-# translations computed from the rois [roi, 3]
-roi_translations = np.squeeze(activations["rois_trans_conv"][0, :det_count], axis=2)
-trans_list = [roi_translations.transpose(0, 2, 1)[i, det_class_ids[i], :].reshape(1, -1) for i in
-              range(len(det_class_ids))]
-roi_translations = np.concatenate(trans_list, axis=0)
-
-# translations computed from convolutions [roi, 3]
-conv_translations = np.squeeze(activations["trans_convb"][0, :det_count], axis=2)
-trans_list = [conv_translations.transpose(0, 2, 1)[i, det_class_ids[i], :].reshape(1, -1) for i in
-              range(len(det_class_ids))]
-conv_translations = np.concatenate(trans_list, axis=0)
-
-fin_translations = activations["trans_squeeze"][0, :det_count]
-trans_list = [fin_translations.transpose(0, 2, 1)[i, det_class_ids[i], :].reshape(1, -1) for i in
-              range(len(det_class_ids))]
-fin_translations = np.concatenate(trans_list, axis=0)
-
-translations = roi_translations + conv_translations
-assert np.array_equal(fin_translations, translations)
-
-rotations = activations["rot_convb"][0, :det_count]
-rot_list = [np.expand_dims(rotations.transpose(0, 3, 1, 2)[i, det_class_ids[i], :],
-                           axis=0) for i in range(len(det_class_ids))]
-rotations = np.concatenate(rot_list, axis=0)
+roi_pc = o3d.PointCloud()
+roi_pc.points = o3d.Vector3dVector(activations["pcl_list"][0, :det_count].reshape(-1, 3))
+color_raw = o3d.read_image(info["path"])
+depth_raw = o3d.read_image(info["depth"])
+rgbd_im = o3d.create_rgbd_image_from_color_and_depth(
+        color_raw, depth_raw, depth_scale=10000, convert_rgb_to_intensity=False)
+camera = o3d.PinholeCameraIntrinsic()
+camera.intrinsic_matrix = intrinsic_matrix
+# camera = o3d.PinholeCameraIntrinsic(
+#     o3d.PinholeCameraIntrinsicParameters.Kinect2DepthCameraDefault)
+pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_im, camera)
+# pred_pc = o3d.PointCloud()
+# pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
+# o3d.draw_geometries([roi_pc, pcd])
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
     df = np.array(pkl.load(f), dtype=np.float32)
 xyz_models = np.transpose(df, (0, 2, 1))
-num_xyz_points = xyz_models.shape[2]
-# pose_loss_model = mrcnn_pose_loss_model(config.NUM_CLASSES, config.TRAIN_ROIS_PER_IMAGE, xyz_models.shape[2])
-# target_trans, target_rot, pred_trans, pred_rot, positive_ix, positive_class_ids, indices, y_true_t, y_true_r, y_pred_t, y_pred_r, pos_xyz_models, loss = pose_loss_model.predict_on_batch(
-#     [activations["target_poses"], activations["target_class_ids"], activations["trans_squeeze"],
-#      activations["rot_convb"], xyz_models])
+# num_xyz_points = xyz_models.shape[2]
+
 ##### test for correct shapes ####
-batch_times_num_rois = activations["pose_target_class_ids"].shape
-num_positive_ix = activations["pose_positive_ix"].shape
-assert activations["pose_target_trans"].shape == batch_times_num_rois + (1, 3,)
-assert activations["pose_target_rot"].shape == batch_times_num_rois + (3, 3,)
-assert activations["pose_pred_trans"].shape == batch_times_num_rois + (config.NUM_CLASSES, 1, 3,)
-assert activations["pose_pred_rot"].shape == batch_times_num_rois + (config.NUM_CLASSES, 3, 3,)
-assert activations["pose_positive_class_ids"].shape == num_positive_ix
-assert activations["pose_indices"].shape == num_positive_ix + (2, )
-assert activations["pose_y_true_t"].shape == num_positive_ix + (1, 3,)
-assert activations["pose_y_true_r"].shape == num_positive_ix + (3, 3,)
-assert activations["pose_y_pred_t"].shape == num_positive_ix + (1, 3,)
-assert activations["pose_y_pred_r"].shape == num_positive_ix + (3, 3,)
-assert activations["pose_pos_xyz_models"].shape == num_positive_ix + (3, num_xyz_points)
-assert activations["transposed_pred_models"].shape == num_positive_ix + (num_xyz_points, 3)
-assert activations["added_pred_models"].shape == num_positive_ix + (num_xyz_points, 3)
-assert activations["transposed_target_models"].shape == num_positive_ix + (num_xyz_points, 3)
-assert activations["added_target_models"].shape == num_positive_ix + (num_xyz_points, 3)
-assert activations["NNDistance1"].shape == num_positive_ix + (num_xyz_points, )
-assert activations["NNDistance2"].shape == num_positive_ix + (num_xyz_points, )
-assert activations["reduced_sum1"].shape == tuple()
-assert activations["reduced_sum2"].shape == tuple()
+# batch_times_num_rois = activations["pose_target_class_ids"].shape
+# num_positive_ix = activations["pose_positive_ix"].shape
+# assert activations["pose_target_trans"].shape == batch_times_num_rois + (1, 3,)
+# assert activations["pose_target_rot"].shape == batch_times_num_rois + (3, 3,)
+# assert activations["pose_pred_trans"].shape == batch_times_num_rois + (config.NUM_CLASSES, 1, 3,)
+# assert activations["pose_pred_rot"].shape == batch_times_num_rois + (config.NUM_CLASSES, 3, 3,)
+# assert activations["pose_positive_class_ids"].shape == num_positive_ix
+# assert activations["pose_indices"].shape == num_positive_ix + (2, )
+# assert activations["pose_y_true_t"].shape == num_positive_ix + (1, 3,)
+# assert activations["pose_y_true_r"].shape == num_positive_ix + (3, 3,)
+# assert activations["pose_y_pred_t"].shape == num_positive_ix + (1, 3,)
+# assert activations["pose_y_pred_r"].shape == num_positive_ix + (3, 3,)
+# assert activations["pose_pos_xyz_models"].shape == num_positive_ix + (3, num_xyz_points)
+# assert activations["transposed_pred_models"].shape == num_positive_ix + (num_xyz_points, 3)
+# assert activations["added_pred_models"].shape == num_positive_ix + (num_xyz_points, 3)
+# assert activations["transposed_target_models"].shape == num_positive_ix + (num_xyz_points, 3)
+# assert activations["added_target_models"].shape == num_positive_ix + (num_xyz_points, 3)
+# assert activations["NNDistance1"].shape == num_positive_ix + (num_xyz_points, )
+# assert activations["NNDistance2"].shape == num_positive_ix + (num_xyz_points, )
+# assert activations["reduced_sum1"].shape == tuple()
+# assert activations["reduced_sum2"].shape == tuple()
 #### equivalency tests
 
 assert np.array_equal(activations["pose_target_class_ids"][:det_count], det_class_ids)
@@ -310,16 +297,16 @@ det_class_indeces = np.take(np.argsort(classes.reshape(-1)), index, mode="clip")
 # TODO: this only works for this specific dataset were the pad
 offset = np.array([0, 80, 0])
 camera_offset = np.expand_dims(np.matmul(np.linalg.inv(intrinsic_matrix), offset), axis=-1)
-for i in range(det_count):
-    corresponding_pose = poses[:, :, det_class_indeces[i]].astype("float32")
-    corresponding_pose[:3, 3] = corresponding_pose[:3, 3] + camera_offset[:, 0]
-    assert classes[det_class_indeces[i]][0] == activations["pose_target_class_ids"][i]
-    np.testing.assert_allclose(activations["pose_y_true_r"][i], corresponding_pose[:3, :3], rtol=1e-5)
-    np.testing.assert_allclose(activations["pose_y_true_t"][i],
-                               np.expand_dims(corresponding_pose[:3, 3], axis=0), rtol=1e-5)
-    concat_pose = np.concatenate([activations["pose_y_true_r"][i],
-                                  np.transpose(activations["pose_y_true_t"], [0, 2, 1])[i]], axis=1)
-    np.testing.assert_allclose(concat_pose, corresponding_pose, rtol=1e-5)
+# for i in range(det_count):
+#     corresponding_pose = poses[:, :, det_class_indeces[i]].astype("float32")
+#     corresponding_pose[:3, 3] = corresponding_pose[:3, 3] + camera_offset[:, 0]
+#     assert classes[det_class_indeces[i]][0] == activations["pose_target_class_ids"][i]
+#     np.testing.assert_allclose(activations["pose_y_true_r"][i], corresponding_pose[:3, :3], rtol=1e-5)
+#     np.testing.assert_allclose(activations["pose_y_true_t"][i],
+#                                np.expand_dims(corresponding_pose[:3, 3], axis=0), rtol=1e-5)
+#     concat_pose = np.concatenate([activations["pose_y_true_r"][i],
+#                                   np.transpose(activations["pose_y_true_t"], [0, 2, 1])[i]], axis=1)
+#     np.testing.assert_allclose(concat_pose, corresponding_pose, rtol=1e-5)
 # check that the selected point clouds are the correct ones for the object inside the roi
 # check that rois with the same gt_id have selected the same point_cloud
 for i in np.unique(det_class_ids):
@@ -344,3 +331,11 @@ visualize.visualize_pointcloud_hulls(image, concat_poses, models,
 # visualize the target models, that are calculated using the gt_poses in the chamfer loss function
 visualize.visualize_pointcloud_hulls(image, identity_poses, activations["added_target_models"],
                                      activations["pose_positive_class_ids"], intrinsic_matrix)
+u, s, vh = np.linalg.svd(activations["pose_y_pred_r"])
+r = np.matmul(u, vh)
+# TODO: this should be the same somehow, but tf return the adjoint of v and np does not
+# still they should be the same if tf.linalg.matmul(u,v, adjoint_b=True) is used, but its not
+# np.testing.assert_allclose(r, activations["pose_pred_rot_svd_matmul"], rtol=1e-3)
+concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
+                               np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
+visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
