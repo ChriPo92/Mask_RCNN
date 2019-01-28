@@ -1234,7 +1234,7 @@ def build_fpn_pose_graph(rois, feature_maps, depth_image, image_meta,
 
 class FeaturePointCloud(KE.Layer):
 
-    def __init__(self, feature_map_size, **kwargs):
+    def __init__(self, feature_map_size, config, **kwargs):
         """
 
         :param rois: batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
@@ -1245,8 +1245,18 @@ class FeaturePointCloud(KE.Layer):
         """
         super(FeaturePointCloud, self).__init__(**kwargs)
         self.feature_map_size = feature_map_size
+        self.config = config
 
     def call(self, inputs, **kwargs):
+        def min_nonzero(tensor):
+            """
+            computes the minimum value of a tensor not including values that are 0
+            :param tensor:
+            :return:
+            """
+            mask = tf.greater(tensor, 0., name="depth_mask")
+            masked_tensor = tf.boolean_mask(tensor, mask)
+            return tf.reduce_min(masked_tensor)
         # [batch, num_rois, (y1, x1, y2, x2)], [batch, num_rois, 24, 24, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
         # [batch, num_rois, 24, 24, 1]
         rois, image_features, depth_image = inputs
@@ -1286,29 +1296,21 @@ class FeaturePointCloud(KE.Layer):
         x_im = tf.expand_dims(x1 + tf.linalg.matmul(width_pixel_scale, X), axis=-1)
         # x_im = (x_im * self.full_image_size[1] - self.intrinsic_matrix[0, 2]) * z_im / self.intrinsic_matrix[0, 0]
         # [batch, num_rois, h*w, 1]
-        # filter out all elements which have z == 0
-        mask = tf.greater(z_im, 0., name="depth_mask")
-        # x_im = tf.boolean_mask(x_im, mask)
-        # y_im = tf.boolean_mask(y_im, mask)
-        masked_z_im = tf.boolean_mask(z_im, mask)
+        # filter out all elements which have z == 0 for the minimum value
+        min_z = utils.batch_slice([z_im], min_nonzero, self.config.IMAGES_PER_GPU, names=["min_nonzero_z"])
         # rescales z to be between 0...1 for each batch, excluding the depth points == 0
         # reshapes z_im to [batch, num_rois*w*h], then takes then min/max along dimension 1
         # to result in an tensor of shape [batch]
-        # TODO: investigate why the shapes seem to be caved in instead of the right direction
         z_im = tf.div(
             tf.subtract(
                 z_im,
-                tf.reduce_min(
-                    tf.reshape(masked_z_im, (batch, -1)),
-                    axis=1)
+                min_z
             ),
             tf.subtract(
                 tf.reduce_max(
                     tf.reshape(z_im, (batch, -1)),
                     axis=1),
-                tf.reduce_min(
-                    tf.reshape(masked_z_im, (batch, -1)),
-                    axis=1)
+                min_z
             )
         )
         # [batch, num_rois, h*w, 3]
@@ -1346,7 +1348,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
     x, d = PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
                            name="roi_align_pointnet_pose")([rois, image_meta] + feature_maps)
     # pcl_list = [batch, num_rois, h*w(576), (x, y, z)], feature_list = [batch, num_rois, h*w, channels]
-    pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size),
+    pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size), config,
                                                name="FeaturePointCloud")([rois, x, d])
     # transfrom to [batch, num_rois, h*w, (x, y, z), 1]
     pcl_list = KL.Lambda(lambda y: tf.expand_dims(y, -1), name="expand_pcl_list")(pcl_list)
@@ -1358,7 +1360,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
                                                 strides=(1, int(config.TOP_DOWN_PYRAMID_SIZE / 4))),
                                       name="mrcnn_pose_feature_conv")(feature_list)
     # merge to [batch, num_rois, h*w(576), 7, 1]
-    print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
+    # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
     point_cloud_repr = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
                                  name="point_cloud_repr_concat")([pcl_list, feature_list])
     # transform to [batch, num_rois, h*w(576), 6, 16]
