@@ -1297,22 +1297,24 @@ class FeaturePointCloud(KE.Layer):
         # x_im = (x_im * self.full_image_size[1] - self.intrinsic_matrix[0, 2]) * z_im / self.intrinsic_matrix[0, 0]
         # [batch, num_rois, h*w, 1]
         # filter out all elements which have z == 0 for the minimum value
-        min_z = utils.batch_slice([z_im], min_nonzero, self.config.IMAGES_PER_GPU, names=["min_nonzero_z"])
+        min_z = tf.reshape(utils.batch_slice([z_im], min_nonzero,
+                                  self.config.IMAGES_PER_GPU,
+                                             names=["min_nonzero_z"]),
+                           (batch, 1, 1, 1))
         # rescales z to be between 0...1 for each batch, excluding the depth points == 0
         # reshapes z_im to [batch, num_rois*w*h], then takes then min/max along dimension 1
         # to result in an tensor of shape [batch]
-        z_im = tf.div(
-            tf.subtract(
+        sub1 = tf.subtract(
                 z_im,
                 min_z
-            ),
-            tf.subtract(
+            )
+        sub2 = tf.subtract(
                 tf.reduce_max(
                     tf.reshape(z_im, (batch, -1)),
                     axis=1),
                 min_z
             )
-        )
+        z_im = tf.div(sub1, sub2)
         # [batch, num_rois, h*w, 3]
         positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
         positions = tf.reshape(positions, (batch, num_rois, -1, 3))

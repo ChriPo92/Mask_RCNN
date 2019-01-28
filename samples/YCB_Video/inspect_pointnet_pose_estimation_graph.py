@@ -69,7 +69,7 @@ DATASET_DIR = os.path.join(os.path.expanduser("~"), "Hitachi/YCB_Video_Dataset")
 class InferenceConfig(config.__class__):
     # Run detection on one image at a time
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 2
     USE_DEPTH_AWARE_OPS = True
     POSE_ESTIMATION_METHOD = "pointnet"
     # DETECTION_MIN_CONFIDENCE = 0.0
