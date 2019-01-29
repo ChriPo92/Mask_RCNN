@@ -9,6 +9,7 @@ import keras.layers as KL
 import keras.engine as KE
 
 
+
 def create_xyz_dataframe(dataset, path_to_dataset):
     models = os.path.join(path_to_dataset, "models")
     dic = []
@@ -251,7 +252,11 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
                                output_shape=(3, N,))(
                                [xyz_models, positive_class_ids])  # [pos_ix, 3, N]
 
-    loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
+    chamfer_loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
+    transl_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
+                            name="mrcnn_pose_loss/transl_error")([y_true_t, y_pred_t])
+    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
+                            name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
     # loss = KL.Lambda(lambda y: tf.cond(tf.greater(tf.size(y[2]), tf.constant(0)),
     #                                    lambda: chamfer_distance_loss(y[0], y[1], y[2], y[3], y[4]),
     #                                    lambda: tf.constant(0.0)), name="mrcnn_pose_loss/loss")(
@@ -260,7 +265,10 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     #                 chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models),
     #                 K.constant(0.0))
     # loss = K.mean(loss)
-    return loss
+    # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
+    total_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2],
+                           name="mrcnn_pose_loss/total_loss")([chamfer_loss, transl_loss, rot_loss])
+    return total_loss
 
 
 def mrcnn_pose_loss_model(classes=22, rois=200, N=2640):

@@ -71,7 +71,7 @@ class InferenceConfig(config.__class__):
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
     USE_DEPTH_AWARE_OPS = True
-    # DETECTION_MIN_CONFIDENCE = 0.0
+    POSE_ESTIMATION_METHOD = "image_features"
 
 
 config = InferenceConfig()
@@ -177,9 +177,7 @@ if TEST_MODE is "training":
         ("mrcnn_class", model.keras_model.get_layer("mrcnn_class").output),
         ("mrcnn_bbox", model.keras_model.get_layer("mrcnn_bbox").output),
         ("mrcnn_class_logits", model.keras_model.get_layer("mrcnn_class_logits").output),
-        # ("mrcnn_pose_loss", model.keras_model.get_layer("mrcnn_pose_loss").output),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
-        # ("mrcnn_pose_loss", model.keras_model.get_layer("mrcnn_pose_loss/loss").output),
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").output),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").output),
         ("pose_target_trans", model.keras_model.get_layer("mrcnn_pose_loss/target_trans").output),
@@ -195,9 +193,11 @@ if TEST_MODE is "training":
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
         ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
+        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").output),
+        ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
+        ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
         ########### from function - chamfer_distance_loss_keras ###########
         ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
-        # ("total_number_of_points", model.keras_model.get_layer("total_number_of_points").output),
         ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
         ("transposed_target_models", model.keras_model.get_layer("transposed_target_models").output),
         ("added_target_models", model.keras_model.get_layer("added_target_models").output),

@@ -69,7 +69,7 @@ DATASET_DIR = os.path.join(os.path.expanduser("~"), "Hitachi/YCB_Video_Dataset")
 class InferenceConfig(config.__class__):
     # Run detection on one image at a time
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     USE_DEPTH_AWARE_OPS = True
     POSE_ESTIMATION_METHOD = "pointnet"
     # DETECTION_MIN_CONFIDENCE = 0.0
@@ -200,6 +200,9 @@ if TEST_MODE is "training":
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
         ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
+        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").output),
+        ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
+        ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
         ########### from function - chamfer_distance_loss_keras ###########
         ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
         ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
