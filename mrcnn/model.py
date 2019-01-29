@@ -1264,10 +1264,10 @@ class FeaturePointCloud(KE.Layer):
         y1, x1, y2, x2 = tf.split(rois, 4, axis=2)
         im_shape = tf.shape(image_features)
         # TODO: this works only as long as the rois have shape 24 x 24
-        batch = im_shape[0]
+        batch = self.config.IMAGES_PER_GPU
         num_rois = im_shape[1]
-        h = tf.cast(im_shape[2], "float32")
-        w = tf.cast(im_shape[3], "float32")
+        h = tf.cast(self.feature_map_size[0], "float32")
+        w = tf.cast(self.feature_map_size[1], "float32")
         channels = im_shape[4]
         # print_op = tf.print([batch, num_rois, h, w, channels])
         # with tf.control_dependencies([print_op]):
@@ -1309,16 +1309,22 @@ class FeaturePointCloud(KE.Layer):
                 min_z
             )
         sub2 = tf.subtract(
+            tf.reshape(
                 tf.reduce_max(
                     tf.reshape(z_im, (batch, -1)),
                     axis=1),
+                (batch, 1, 1, 1)),
                 min_z
             )
+
         z_im = tf.div(sub1, sub2)
         # [batch, num_rois, h*w, 3]
+
         positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
         positions = tf.reshape(positions, (batch, num_rois, -1, 3))
         # [batch, num_rois, h*w, config.FEATURE_PYRAMID_TOP_DOWN_SIZE]
+        # print_op = tf.print([batch, num_rois, h, w, channels, tf.shape(x_im), tf.shape(y_im), tf.shape(z_im), tf.shape(positions)])
+        # with tf.control_dependencies([print_op]):
         features = tf.reshape(image_features, (batch, num_rois, -1, channels), name="reshape_features")
         return [positions, features]
 
