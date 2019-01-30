@@ -119,7 +119,7 @@ model.load_weights(MODEL_PATH, by_name=True)
 image_id = random.choice(dataset.image_ids)
 # image_id = 95506
 info = dataset.image_info[image_id]
-image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_pose = modellib.load_image_gt(dataset, config, image_id,
+image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_pose, intrinsic_matrix_gt = modellib.load_image_gt(dataset, config, image_id,
                                                                                    use_mini_mask=False)
 intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos(info["id"])
 
@@ -260,7 +260,8 @@ camera.intrinsic_matrix = intrinsic_matrix
 pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_im, camera)
 # pred_pc = o3d.PointCloud()
 # pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
-# o3d.draw_geometries([roi_pc, pcd])
+# TODO: investigate, why there is this strange cone in the frusttrum pcds
+o3d.draw_geometries([roi_pc, pcd])
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
     df = np.array(pkl.load(f), dtype=np.float32)
@@ -319,7 +320,7 @@ for i in np.unique(det_class_ids):
 
 # transl is [n, 1, 3] and needs to be [N, 3, 1] to concatenate to [N, 3, 4] poses
 concat_poses = np.concatenate([activations["pose_y_true_r"], np.transpose(activations["pose_y_true_t"], [0, 2, 1])], axis=2)
-visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix)
+visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix_gt)
 models = np.transpose(activations["pose_pos_xyz_models"], [0, 2, 1])
 homogeneous_models = np.concatenate([models, np.tile([1], (models.shape[0], models.shape[1], 1))], axis=2)
 trans_hom_models = np.matmul(concat_poses, np.transpose(homogeneous_models, [0, 2, 1])).transpose([0, 2, 1])
@@ -330,10 +331,10 @@ identity_poses[:, 1, 1] = 1
 identity_poses[:, 2, 2] = 1
 
 visualize.visualize_pointcloud_hulls(image, concat_poses, models,
-                                     activations["pose_positive_class_ids"], intrinsic_matrix)
+                                     activations["pose_positive_class_ids"], intrinsic_matrix_gt)
 # visualize the target models, that are calculated using the gt_poses in the chamfer loss function
 visualize.visualize_pointcloud_hulls(image, identity_poses, activations["added_target_models"],
-                                     activations["pose_positive_class_ids"], intrinsic_matrix)
+                                     activations["pose_positive_class_ids"], intrinsic_matrix_gt)
 u, s, vh = np.linalg.svd(activations["pose_y_pred_r"])
 r = np.matmul(u, vh)
 # TODO: this should be the same somehow, but tf return the adjoint of v and np does not

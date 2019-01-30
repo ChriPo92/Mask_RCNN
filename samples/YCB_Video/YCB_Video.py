@@ -177,8 +177,9 @@ class YCBVDataset(utils.Dataset):
         if image.shape[-1] == 4:
             image = image[..., :3]
         if self.use_rgbd:
-            depth = cv2.imread(self.image_info[image_id]['depth'], 0)
-            image = np.concatenate((image, np.expand_dims(depth / 10000, 2)), axis=2)
+            # TODO: think about using the loading of open3d
+            depth = cv2.imread(self.image_info[image_id]['depth'], -1)
+            image = np.concatenate((image, np.expand_dims(depth / 10000., 2)), axis=2)
         return image
 
     def load_pose(self, image_id):
@@ -756,7 +757,7 @@ if __name__ == '__main__':
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
-        num += 100
+        num += 30
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
@@ -778,7 +779,7 @@ if __name__ == '__main__':
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        num += 100
+        num += 30
         layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
@@ -791,7 +792,7 @@ if __name__ == '__main__':
 
         # # Training - Stage 3
         # # Fine tune all layers
-        num += 100
+        num += 40
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
                         learning_rate=config.LEARNING_RATE / 50,

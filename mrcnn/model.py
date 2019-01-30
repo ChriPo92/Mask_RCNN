@@ -1258,8 +1258,8 @@ class FeaturePointCloud(KE.Layer):
             masked_tensor = tf.boolean_mask(tensor, mask)
             return tf.reduce_min(masked_tensor)
         # [batch, num_rois, (y1, x1, y2, x2)], [batch, num_rois, 24, 24, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
-        # [batch, num_rois, 24, 24, 1]
-        rois, image_features, depth_image = inputs
+        # [batch, num_rois, 24, 24, 1], [batch, 3, 3]
+        rois, image_features, depth_image, intrinsic_matrices = inputs
         # [batch, num_rois, 1], [batch, num_rois, 1], [batch, num_rois, 1], [batch, num_rois, 1]
         y1, x1, y2, x2 = tf.split(rois, 4, axis=2)
         im_shape = tf.shape(image_features)
@@ -1292,9 +1292,9 @@ class FeaturePointCloud(KE.Layer):
         # expand_dims([batch, num_rois, 1] + [batch, num_rois, h*w]) =! [batch, num_rois, h*w, 1]
         z_im = tf.reshape(depth_image, (batch, num_rois, -1, 1), name="z_im")
         y_im = tf.expand_dims(y1 + tf.linalg.matmul(height_pixel_scale, Y), axis=-1)
-        # y_im = (y_im * self.full_image_size[0] - self.intrinsic_matrix[1, 2]) * z_im / self.intrinsic_matrix[1, 1]
+        y_im = (y_im * self.config.IMAGE_SHAPE[0] - intrinsic_matrices[:, 1, 2]) * z_im / intrinsic_matrices[:, 1, 1]
         x_im = tf.expand_dims(x1 + tf.linalg.matmul(width_pixel_scale, X), axis=-1)
-        # x_im = (x_im * self.full_image_size[1] - self.intrinsic_matrix[0, 2]) * z_im / self.intrinsic_matrix[0, 0]
+        x_im = (x_im * self.config.IMAGE_SHAPE[1] - intrinsic_matrices[:, 0, 2]) * z_im / intrinsic_matrices[:, 0, 0]
         # [batch, num_rois, h*w, 1]
         # filter out all elements which have z == 0 for the minimum value
         min_z = tf.reshape(utils.batch_slice([z_im], min_nonzero,
@@ -1317,7 +1317,7 @@ class FeaturePointCloud(KE.Layer):
                 min_z
             )
 
-        z_im = tf.div(sub1, sub2)
+        # z_im = tf.div(sub1, sub2)
         # [batch, num_rois, h*w, 3]
 
         positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
@@ -1336,7 +1336,7 @@ class FeaturePointCloud(KE.Layer):
                         image_shape[:2] + (feature_maps, image_shape[-1])]
         return output_shape
 
-def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
+def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, intrinsic_matrices,
                                     config, pool_size=24, train_bn=True):
     """Builds the computation graph of the pose estimation head of Feature Pyramid Network.
 
@@ -1345,7 +1345,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
         feature_maps: List of feature maps from different layers of the pyramid,
                       [P2, P3, P4, P5]. Each has a different resolution.
         image_meta: [batch, (meta data)] Image details. See compose_image_meta()
-        num_classes: number of classes, which determines the depth of the results
+        intrinsic_matrices: [batch, 3, 3] Intrinsic Matrix of the camera batch was taken with
         train_bn: Boolean. Train or freeze Batch Norm layers
 
         Returns: Trans [[batch, num_rois, 3]
@@ -1357,7 +1357,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta,
                            name="roi_align_pointnet_pose")([rois, image_meta] + feature_maps)
     # pcl_list = [batch, num_rois, h*w(576), (x, y, z)], feature_list = [batch, num_rois, h*w, channels]
     pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size), config,
-                                               name="FeaturePointCloud")([rois, x, d])
+                                               name="FeaturePointCloud")([rois, x, d, intrinsic_matrices])
     # transfrom to [batch, num_rois, h*w, (x, y, z), 1]
     pcl_list = KL.Lambda(lambda y: tf.expand_dims(y, -1), name="expand_pcl_list")(pcl_list)
     # expand to [batch, num_rois, h*w, channels, 1]
@@ -1681,7 +1681,15 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         assert np.array_equal(pclass_ids, class_ids)
         # camera_matrix = utils.create_camera_matrix_from_intrinsic_matrix(intrinsic_matrix, scale, padding, crop)
         # pose = np.transpose(np.matmul(np.transpose(pose, [2, 0, 1]), camera_matrix), [1, 2, 0])
-        pose = utils.transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop)
+        # pose = utils.transform_pose_after_resizing(pose, intrinsic_matrix, scale, padding, crop)
+        # through the padding the effective intrinsic matrix changes; if this is not changed, the effective pose has to
+        # be changed
+        # TODO: account for scaling and crop
+        assert scale == 1
+        top = padding[0][0]
+        left = padding[1][0]
+        intrinsic_matrix[0, 2] = intrinsic_matrix[0, 2] + left
+        intrinsic_matrix[1, 2] = intrinsic_matrix[1, 2] + top
         assert np.max(pose) <= 2.0, f"For learning, the maximum number in the pose should not be greater than 2, but is {np.max(pose)}"
 
     # Random horizontal flips.
@@ -1760,7 +1768,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
     image_meta = compose_image_meta(image_id, original_shape, image.shape,
                                     window, scale, active_class_ids)
 
-    return image, image_meta, class_ids, bbox, mask, pose
+    return image, image_meta, class_ids, bbox, mask, pose, intrinsic_matrix
 
 
 def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, gt_pose, config):
@@ -2152,6 +2160,8 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 case they are defined in MINI_MASK_SHAPE.
     - gt_poses: [batch, 4, 4, MAX_GT_INSTANCES]: Ground Truth poses for each
                 instance, corresponding to the masks
+    - intrinsic_matrices [batch, 3, 3] intrinsic matrices of the cameras the
+                            single images were taken with
 
     outputs list: Usually empty in regular training. But if detection_targets
         is True then the outputs list contains target class_ids, bbox deltas,
@@ -2185,12 +2195,12 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
 
             # If the image source is not to be augmented pass None as augmentation
             if dataset.image_info[image_id]['source'] in no_augmentation_sources:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_pose = \
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_pose, intrinsic_matrix = \
                     load_image_gt(dataset, config, image_id, augment=augment,
                                   augmentation=None,
                                   use_mini_mask=config.USE_MINI_MASK)
             else:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_pose = \
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_pose, intrinsic_matrix = \
                     load_image_gt(dataset, config, image_id, augment=augment,
                                   augmentation=augmentation,
                                   use_mini_mask=config.USE_MINI_MASK)
@@ -2229,7 +2239,8 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 batch_rpn_match = np.zeros(
                     [batch_size, anchors.shape[0], 1], dtype=rpn_match.dtype)
                 batch_rpn_bbox = np.zeros(
-                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype)
+                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4],
+                    dtype=rpn_bbox.dtype)
                 batch_images = np.zeros(
                     (batch_size,) + tuple(image_shape), dtype=np.float32)
                 batch_gt_class_ids = np.zeros(
@@ -2242,6 +2253,8 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                 batch_gt_poses = np.zeros(
                     (batch_size, gt_pose.shape[0], gt_pose.shape[1],
                      config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
+                batch_intrinsic_matrices = np.zeros((batch_size, 3, 3),
+                                                    dtype=intrinsic_matrix.dtype)
                 if random_rois:
                     batch_rpn_rois = np.zeros(
                         (batch_size, rpn_rois.shape[0], 4), dtype=rpn_rois.dtype)
@@ -2281,6 +2294,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
             batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
             batch_gt_poses[b, :, :, :gt_pose.shape[-1]] = gt_pose
+            batch_intrinsic_matrices[b] = intrinsic_matrix
             if random_rois:
                 batch_rpn_rois[b] = rpn_rois
                 if detection_targets:
@@ -2300,7 +2314,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                     inputs = [batch_images, batch_depth_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
                               batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
                 if config.ESTIMATE_6D_POSE:
-                    inputs.extend([batch_gt_poses])
+                    inputs.extend([batch_intrinsic_matrices, batch_gt_poses])
                 outputs = []
 
                 if random_rois:
@@ -2380,6 +2394,10 @@ class MaskRCNN():
             input_depth = KL.Input(shape=[None, None, 1], name="input_depth")
         else:
             input_depth = None
+        if config.ESTIMATE_6D_POSE:
+            input_intrinsic_matrices = KL.Input(shape=[None, 3, 3], name="input_intrinsic_matrices")
+        else:
+            input_intrinsic_matrices = None
         if mode == "training":
             # RPN GT
             input_rpn_match = KL.Input(
@@ -2546,11 +2564,13 @@ class MaskRCNN():
                 mrcnn_pose_trans, mrcnn_pose_rot = None, None
                 if config.POSE_ESTIMATION_METHOD in ["image_features", "both"]:
                     mrcnn_pose_trans, mrcnn_pose_rot = build_fpn_pose_graph(rois, mrcnn_feature_maps,
-                                                      input_depth, input_image_meta,
-                                                      config.NUM_CLASSES, config.TRAIN_BN)
+                                                                            input_depth, input_image_meta,
+                                                                            config.NUM_CLASSES, config.TRAIN_BN)
                 if config.POSE_ESTIMATION_METHOD in ["pointnet", "both"]:
                     point_pose_trans, point_pose_rot = build_fpn_pointnet_pose_graph(rois, mrcnn_feature_maps,
-                                                      input_depth, input_image_meta, config, 24, config.TRAIN_BN)
+                                                                                     input_depth, input_image_meta,
+                                                                                     input_intrinsic_matrices,
+                                                                                     config, 24, config.TRAIN_BN)
                     if mrcnn_pose_rot is None and mrcnn_pose_trans is None:
                         mrcnn_pose_trans = point_pose_trans
                         mrcnn_pose_rot = point_pose_rot
@@ -2586,18 +2606,17 @@ class MaskRCNN():
             # Model
             inputs = [input_image, input_image_meta,
                       input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
-            if config.ESTIMATE_6D_POSE:
-                inputs.extend([input_gt_poses, xyz])
-            if not config.USE_RPN_ROIS:
-                inputs.append(input_rois)
-            if config.USE_DEPTH_AWARE_OPS:
-                inputs.insert(1, input_depth)
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
                        mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
                        rpn_rois, output_rois,
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
             if config.ESTIMATE_6D_POSE:
+                inputs.extend([input_intrinsic_matrices, input_gt_poses, xyz])
                 outputs.extend([mrcnn_pose_trans, mrcnn_pose_rot, pose_loss])
+            if not config.USE_RPN_ROIS:
+                inputs.append(input_rois)
+            if config.USE_DEPTH_AWARE_OPS:
+                inputs.insert(1, input_depth)
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
             # Network Heads
@@ -2631,6 +2650,7 @@ class MaskRCNN():
             if config.USE_DEPTH_AWARE_OPS:
                 inputs.insert(1, input_depth)
             if config.ESTIMATE_6D_POSE:
+                inputs.append(input_intrinsic_matrices)
                 outputs.extend([mrcnn_pose_trans, mrcnn_pose_rot])
             model = KM.Model(inputs,
                              outputs,
@@ -3042,7 +3062,11 @@ class MaskRCNN():
         if rot is not None and trans is not None:
             f_rots = rot[np.arange(N), :, :, class_ids]
             f_trans = trans[np.arange(N), :, class_ids]
-            pre_poses = np.concatenate((f_rots, np.expand_dims(f_trans, axis=-1)), axis=2)
+            # transform arbitrary matrix into a rotation matrix using svd
+            # https://mathoverflow.net/questions/86539/closest-3d-rotation-matrix-in-the-frobenius-norm-sense
+            u, s, vh = np.linalg.svd(f_rots)
+            r = np.matmul(u, vh)
+            pre_poses = np.concatenate((r, np.expand_dims(f_trans, axis=-1)), axis=2)
             shape = pre_poses.shape
             poses = np.concatenate((pre_poses, np.tile([0, 0, 0, 1], (shape[0], 1, 1))), axis=1)
 
@@ -3367,7 +3391,7 @@ class MaskRCNN():
         kf = K.function(model.inputs, list(outputs.values()))
 
         # Prepare inputs
-        image, image_meta, class_ids, bbox, mask, pose = load_image_gt(dataset, self.config, image_id)
+        image, image_meta, class_ids, bbox, mask, pose, intrinsic_matrix = load_image_gt(dataset, self.config, image_id)
         image_shape = image.shape
         if self.config.USE_DEPTH_AWARE_OPS:
             input_image = np.expand_dims(image[:, :, :3], 0)
@@ -3388,7 +3412,7 @@ class MaskRCNN():
             with open(self.config.XYZ_MODEL_PATH, "rb") as f:
                 df = np.array(pkl.load(f), dtype=np.float32)
             xyz_models =np.transpose(df, (0, 2, 1))
-            inputs.extend([np.expand_dims(pose, 0), xyz_models])
+            inputs.extend([np.expand_dims(intrinsic_matrix, 0), np.expand_dims(pose, 0), xyz_models])
 
         if not self.config.USE_RPN_ROIS:
             rpn_rois = generate_random_rois(
