@@ -261,6 +261,7 @@ pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_im, camera)
 # pred_pc = o3d.PointCloud()
 # pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
 # TODO: investigate, why there is this strange cone in the frusttrum pcds
+# this might have something to do with the way the depth is pooled
 o3d.draw_geometries([roi_pc, pcd])
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
