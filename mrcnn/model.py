@@ -1292,9 +1292,19 @@ class FeaturePointCloud(KE.Layer):
         # expand_dims([batch, num_rois, 1] + [batch, num_rois, h*w]) =! [batch, num_rois, h*w, 1]
         z_im = tf.reshape(depth_image, (batch, num_rois, -1, 1), name="z_im")
         y_im = tf.expand_dims(y1 + tf.linalg.matmul(height_pixel_scale, Y), axis=-1)
-        y_im = (y_im * self.config.IMAGE_SHAPE[0] - intrinsic_matrices[:, 1, 2]) * z_im / intrinsic_matrices[:, 1, 1]
+        # [batch, num_rois, h*w, 1] - [batch, 1, 1, 1] = [batch, num_rois, h*w, 1] -> subtract principal point
+        y_im = (y_im * self.config.IMAGE_SHAPE[0] - tf.reshape(intrinsic_matrices[:, 1, 2], (batch, 1, 1, 1)))
+        # [batch, num_rois, h*w, 1] * [batch, num_rois, h*w, 1] = [batch, num_rois, h*w, 1] -> get correct depth scaling
+        y_im = y_im * z_im
+        # [batch, num_rois, h*w, 1] / [batch, 1, 1, 1] = [batch, num_rois, h*w, 1] -> divide by focal length
+        y_im = y_im / tf.reshape(intrinsic_matrices[:, 1, 1], (batch, 1, 1, 1))
         x_im = tf.expand_dims(x1 + tf.linalg.matmul(width_pixel_scale, X), axis=-1)
-        x_im = (x_im * self.config.IMAGE_SHAPE[1] - intrinsic_matrices[:, 0, 2]) * z_im / intrinsic_matrices[:, 0, 0]
+        # x_im = (x_im * self.config.IMAGE_SHAPE[1] - intrinsic_matrices[:, 0, 2]) * z_im / intrinsic_matrices[:, 0, 0]
+        x_im = (x_im * self.config.IMAGE_SHAPE[1] - tf.reshape(intrinsic_matrices[:, 0, 2], (batch, 1, 1, 1)))
+        # [batch, num_rois, h*w, 1] * [batch, num_rois, h*w, 1] = [batch, num_rois, h*w, 1] -> get correct depth scaling
+        x_im = x_im * z_im
+        # [batch, num_rois, h*w, 1] / [batch, 1, 1, 1] = [batch, num_rois, h*w, 1] -> divide by focal length
+        x_im = x_im / tf.reshape(intrinsic_matrices[:, 0, 0], (batch, 1, 1, 1))
         # [batch, num_rois, h*w, 1]
         # filter out all elements which have z == 0 for the minimum value
         min_z = tf.reshape(utils.batch_slice([z_im], min_nonzero,
@@ -1323,7 +1333,7 @@ class FeaturePointCloud(KE.Layer):
         positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
         positions = tf.reshape(positions, (batch, num_rois, -1, 3))
         # [batch, num_rois, h*w, config.FEATURE_PYRAMID_TOP_DOWN_SIZE]
-        # print_op = tf.print([batch, num_rois, h, w, channels, tf.shape(x_im), tf.shape(y_im), tf.shape(z_im), tf.shape(positions)])
+        # print_op = tf.print([tf.shape(y_im), tf.shape(x_im), tf.shape(z_im), tf.shape(positions)])
         # with tf.control_dependencies([print_op]):
         features = tf.reshape(image_features, (batch, num_rois, -1, channels), name="reshape_features")
         return [positions, features]
@@ -2395,7 +2405,7 @@ class MaskRCNN():
         else:
             input_depth = None
         if config.ESTIMATE_6D_POSE:
-            input_intrinsic_matrices = KL.Input(shape=[None, 3, 3], name="input_intrinsic_matrices")
+            input_intrinsic_matrices = KL.Input(shape=[3, 3], name="input_intrinsic_matrices")
         else:
             input_intrinsic_matrices = None
         if mode == "training":
