@@ -1348,14 +1348,14 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
         intrinsic_matrices: [batch, 3, 3] Intrinsic Matrix of the camera batch was taken with
         train_bn: Boolean. Train or freeze Batch Norm layers
 
-        Returns: Trans [[batch, num_rois, 3]
+        Returns: Trans [[batch, num_rois, 3, 1, num_classes]
         """
 
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
     x, d = PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
                            name="roi_align_pointnet_pose")([rois, image_meta] + feature_maps)
-    # pcl_list = [batch, num_rois, h*w(576), (x, y, z)], feature_list = [batch, num_rois, h*w, channels]
+    # pcl_list = [batch, num_rois, h*w(576), (xq, y, z)], feature_list = [batch, num_rois, h*w, channels]
     pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size), config,
                                                name="FeaturePointCloud")([rois, x, d, intrinsic_matrices])
     # transfrom to [batch, num_rois, h*w, (x, y, z), 1]
@@ -1367,6 +1367,9 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
                                                 padding="valid",
                                                 strides=(1, int(config.TOP_DOWN_PYRAMID_SIZE / 4))),
                                       name="mrcnn_pose_feature_conv")(feature_list)
+    feature_list = KL.TimeDistributed(BatchNorm(),
+                                      name='mrcnn_pose_feature_bn')(feature_list, training=train_bn)
+    feature_list = KL.Activation('relu')(feature_list)
     # merge to [batch, num_rois, h*w(576), 7, 1]
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
     point_cloud_repr = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
@@ -1376,16 +1379,19 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
                                           name="mrcnn_pointnet_pose_conv1")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
                                           name='mrcnn_pointnet_pose_bn1')(point_cloud_repr, training=train_bn)
+    point_cloud_repr = KL.Activation('relu')(point_cloud_repr)
     # transform to [batch, num_rois, h*w(576), 4, 32]
     point_cloud_repr = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
                                           name="mrcnn_pointnet_pose_conv2")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
                                           name='mrcnn_pointnet_pose_bn2')(point_cloud_repr, training=train_bn)
+    point_cloud_repr = KL.Activation('relu')(point_cloud_repr)
     # transform to [batch, num_rois, h*w(576), 1, 64]
     point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
                                           name="mrcnn_pointnet_pose_conv3")(point_cloud_repr)
     point_cloud_repr = KL.TimeDistributed(BatchNorm(),
                                           name='mrcnn_pointnet_pose_bn3')(point_cloud_repr, training=train_bn)
+
     x = KL.Activation('relu')(point_cloud_repr)
     # transform to [batch, num_rois, h*w(576), 1, 256]
     x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
@@ -1412,7 +1418,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     trans = KL.TimeDistributed(KL.Deconv2D(256, (3, 1)),
                                name="mrcnn_pose_trans_deconv")(shared)
     # [batch, num_rois, 3, 1, num_classes]
-    trans = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="tanh"),
+    trans = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="linear"),
                                name="mrcnn_pose_trans_conv")(trans)
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])

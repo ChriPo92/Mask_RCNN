@@ -38,7 +38,7 @@ import open3d as o3d
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_pointnet.h5")
 DEBUG = False
 if DEBUG:
     import keras.backend as KB
@@ -262,12 +262,22 @@ pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_im, camera)
 # pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
 # TODO: investigate, why there is this strange cone in the frusttrum pcds
 # this might have something to do with the way the depth is pooled
-o3d.draw_geometries([roi_pc, pcd])
+# o3d.draw_geometries([roi_pc, pcd])
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
     df = np.array(pkl.load(f), dtype=np.float32)
 xyz_models = np.transpose(df, (0, 2, 1))
 # num_xyz_points = xyz_models.shape[2]
+
+# test that translations given by estimation branch are the ones used to calculate loss
+pred_trans1 = activations["trans_conv"]
+pred_trans2 = np.reshape(pred_trans1, (-1, 1, 3, config.NUM_CLASSES))
+np.testing.assert_equal(pred_trans2, np.reshape(np.transpose(pred_trans1,
+                                                            [0, 1, 3, 2, 4]), (-1, 1, 3, config.NUM_CLASSES)))
+pred_trans3 = np.transpose(pred_trans2, [0, 3, 1, 2])
+np.testing.assert_equal(pred_trans3, activations["pose_pred_trans"])
+tci = activations["pose_target_class_ids"]
+pred_trans3[0][tci[0]]
 
 ##### test for correct shapes ####
 # batch_times_num_rois = activations["pose_target_class_ids"].shape
@@ -300,18 +310,15 @@ assert np.array_equal(np.where(activations["target_class_ids"][0] > 0)[0], activ
 index = np.searchsorted(classes.reshape(-1), det_class_ids, sorter=np.argsort(classes.reshape(-1)))
 det_class_indeces = np.take(np.argsort(classes.reshape(-1)), index, mode="clip")
 # TODO: this only works for this specific dataset were the pad
-offset = np.array([0, 80, 0])
-camera_offset = np.expand_dims(np.matmul(np.linalg.inv(intrinsic_matrix), offset), axis=-1)
-# for i in range(det_count):
-#     corresponding_pose = poses[:, :, det_class_indeces[i]].astype("float32")
-#     corresponding_pose[:3, 3] = corresponding_pose[:3, 3] + camera_offset[:, 0]
-#     assert classes[det_class_indeces[i]][0] == activations["pose_target_class_ids"][i]
-#     np.testing.assert_allclose(activations["pose_y_true_r"][i], corresponding_pose[:3, :3], rtol=1e-5)
-#     np.testing.assert_allclose(activations["pose_y_true_t"][i],
-#                                np.expand_dims(corresponding_pose[:3, 3], axis=0), rtol=1e-5)
-#     concat_pose = np.concatenate([activations["pose_y_true_r"][i],
-#                                   np.transpose(activations["pose_y_true_t"], [0, 2, 1])[i]], axis=1)
-#     np.testing.assert_allclose(concat_pose, corresponding_pose, rtol=1e-5)
+for i in range(det_count):
+    corresponding_pose = poses[:, :, det_class_indeces[i]].astype("float32")
+    assert classes[det_class_indeces[i]][0] == activations["pose_target_class_ids"][i]
+    np.testing.assert_allclose(activations["pose_y_true_r"][i], corresponding_pose[:3, :3], rtol=1e-5)
+    np.testing.assert_allclose(activations["pose_y_true_t"][i],
+                               np.expand_dims(corresponding_pose[:3, 3], axis=0), rtol=1e-5)
+    concat_pose = np.concatenate([activations["pose_y_true_r"][i],
+                                  np.transpose(activations["pose_y_true_t"], [0, 2, 1])[i]], axis=1)
+    np.testing.assert_allclose(concat_pose, corresponding_pose, rtol=1e-5)
 # check that the selected point clouds are the correct ones for the object inside the roi
 # check that rois with the same gt_id have selected the same point_cloud
 for i in np.unique(det_class_ids):

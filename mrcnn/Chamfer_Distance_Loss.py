@@ -185,7 +185,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
 
     :param target_poses: [batch, num_rois, 4, 4] Translation Matrix
     :param target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
-    :param pred_trans: [batch, num_rois, 3, NUM_CLASSES]
+    :param pred_trans: [batch, num_rois, 3, 1, NUM_CLASSES]
     :param pred_rot: [batch, num_rois, 3, 3, NUM_CLASSES]
     :param xyz_models: [NUM_CLASSES, N, 3] point cloud models of the
                         different classes, where N is the number of points
@@ -266,8 +266,8 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     #                 K.constant(0.0))
     # loss = K.mean(loss)
     # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
-    total_loss = KL.Lambda(lambda y: y[0] + y[1],
-                           name="mrcnn_pose_loss/total_loss")([transl_loss, rot_loss])
+    total_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2],
+                           name="mrcnn_pose_loss/total_loss")([chamfer_loss, transl_loss, rot_loss])
     return total_loss
 
 
