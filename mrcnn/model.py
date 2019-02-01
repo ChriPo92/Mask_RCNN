@@ -2967,7 +2967,8 @@ class MaskRCNN():
         # Callbacks
         callbacks = [
             keras.callbacks.TensorBoard(log_dir=self.log_dir,
-                                        histogram_freq=0, write_graph=True, write_images=False),
+                                        histogram_freq=0, write_graph=True, write_images=False,
+                                        write_grads=True),
             keras.callbacks.ModelCheckpoint(self.checkpoint_path,
                                             verbose=0, save_weights_only=True),
         ]
@@ -3379,7 +3380,7 @@ class MaskRCNN():
             log(k, v)
         return outputs_np
 
-    def run_trainings_graph(self, dataset, image_id, outputs, random_rois=0):
+    def run_trainings_graph(self, dataset, image_id, outputs, random_rois=0, return_gradients=False):
         """Runs a sub-set of the computation graph that computes the given
         outputs.
 
@@ -3399,6 +3400,25 @@ class MaskRCNN():
         outputs = OrderedDict(outputs)
         for o in outputs.values():
             assert o is not None
+
+        if return_gradients:
+            self.compile(self.config.LEARNING_RATE, self.config.LEARNING_MOMENTUM)
+            weights = self.keras_model.trainable_weights  # weight tensors
+            weights_filtered = []
+            for weight in weights:
+                try:
+                    trainable = self.keras_model.get_layer(weight.name.split("/")[0]).trainable
+                except ValueError:
+                    print(f"{weight.name} not found")
+                    trainable = False
+                if trainable and not "rpn" in weight.name:
+                    weights_filtered.append(weight)
+            # weights = [weight for weight in weights if self.keras_model.get_layer(
+            #     weight.name.split("/")[0]).trainable]  # filter down weights tensors to only ones which are trainable
+            gradients = self.keras_model.optimizer.get_gradients(self.keras_model.total_loss, weights_filtered)
+            for grad in gradients:
+                outputs[grad.name] = grad
+            # outputs["gradients"] = gradients
 
         # Build a Keras function to run parts of the computation graph
         inputs = model.inputs

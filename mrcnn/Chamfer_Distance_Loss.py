@@ -187,7 +187,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     :param target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
     :param pred_trans: [batch, num_rois, 3, 1, NUM_CLASSES]
     :param pred_rot: [batch, num_rois, 3, 3, NUM_CLASSES]
-    :param xyz_models: [NUM_CLASSES, N, 3] point cloud models of the
+    :param xyz_models: [NUM_CLASSES, 3, N] point cloud models of the
                         different classes, where N is the number of points
                         in the model
     :return:

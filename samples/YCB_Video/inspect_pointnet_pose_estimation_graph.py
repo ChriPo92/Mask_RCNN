@@ -30,9 +30,10 @@ from mrcnn import visualize
 from mrcnn.visualize import display_images
 from samples.YCB_Video.Test_Pose_Estimation import calculate_2d_hull_of_pointcloud, load_YCB_meta_infos
 import mrcnn.model as modellib
-from mrcnn.model import log
-from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_model
+from mrcnn.model import log, build_fpn_pointnet_pose_graph
+from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_keras
 import open3d as o3d
+import keras as k
 
 # Directory to save logs and trained model
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
@@ -159,7 +160,7 @@ intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center =
 
 if TEST_MODE is "training":
     activations = model.run_trainings_graph(dataset, image_id, [
-        ("detections", model.keras_model.get_layer("proposal_targets").output[0]),
+        ("rois", model.keras_model.get_layer("proposal_targets").output[0]),
         ("target_class_ids", model.keras_model.get_layer("proposal_targets").output[1]),
         ("target_poses", model.keras_model.get_layer("proposal_targets").output[4]),
         ("mrcnn_class", model.keras_model.get_layer("mrcnn_class").output),
@@ -213,13 +214,19 @@ if TEST_MODE is "training":
         ("reduced_sum1", model.keras_model.get_layer("reduced_mean1").output),
         ("reduced_sum2", model.keras_model.get_layer("reduced_mean2").output),
         ("added_reduced_sum", model.keras_model.get_layer("added_reduced_mean").output),
-        ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output)
-    ])
+        ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output),
+        ######## Feature Maps ######
+        ("fpn_p2", model.keras_model.get_layer("fpn_p2").output),
+        ("fpn_p3", model.keras_model.get_layer("fpn_p3").output),
+        ("fpn_p4", model.keras_model.get_layer("fpn_p4").output),
+        ("fpn_p5", model.keras_model.get_layer("fpn_p5").output),
+
+    ], return_gradients=False)
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
 
 det_count = np.where(det_class_ids == 0)[0][0]
 det_class_ids = det_class_ids[:det_count]
-detections = activations['detections'][0, :det_count]
+detections = activations['rois'][0, :det_count]
 # class_logits = class_logits[:det_count]
 roi_class_ids = np.argmax(activations["mrcnn_class"][0], axis=1)
 roi_scores = activations["mrcnn_class"][0, np.arange(roi_class_ids.shape[0]), roi_class_ids]
@@ -351,3 +358,43 @@ r = np.matmul(u, vh)
 concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
 visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
+
+
+rois = k.layers.Input((config.TRAIN_ROIS_PER_IMAGE, 4))
+P2 = k.layers.Input((160, 160, 256))
+P3 = k.layers.Input((80, 80, 256))
+P4 = k.layers.Input((40, 40, 256))
+P5 = k.layers.Input((20, 20, 256))
+depth_image = k.layers.Input((config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], 1))
+image_meta_in = k.layers.Input(image_meta.shape)
+intrinsic_matrices = k.layers.Input(intrinsic_matrix.shape)
+trans, rot = build_fpn_pointnet_pose_graph(rois, [P2, P3, P4, P5], depth_image, image_meta_in, intrinsic_matrices, config)
+
+
+optimizer = k.optimizers.SGD(
+            lr=config.LEARNING_RATE, momentum=config.LEARNING_MOMENTUM,
+            clipnorm=config.GRADIENT_CLIP_NORM)
+target_poses = k.layers.Input(tensor=tf.constant(activations["pose_target_poses"].reshape((config.IMAGES_PER_GPU, config.TRAIN_ROIS_PER_IMAGE, 4, 4))))
+target_class_ids = k.layers.Input(tensor=tf.constant(activations["pose_target_class_ids"].reshape((config.IMAGES_PER_GPU, -1))))
+# because keras is retarded
+target_poses._keras_shape = (None, None, 4, 4)
+xyz = k.layers.Input(tensor=tf.constant(xyz_models))
+loss = mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, trans, rot, xyz, config, 2620)
+inputs = [rois, P2, P3, P4, P5, depth_image, image_meta_in, intrinsic_matrices, target_poses, target_class_ids, xyz]
+test_model = k.Model(inputs=inputs, outputs=[trans, rot, loss])
+def custom_loss(y_true, y_pred):
+    return y_pred
+test_model.compile(optimizer, loss=custom_loss, loss_weights=[0, 0, 1])
+x = [activations["rois"], activations["fpn_p2"], activations["fpn_p3"],
+              activations["fpn_p4"], activations["fpn_p5"], image[np.newaxis, :, :, 3, np.newaxis],
+             np.expand_dims(image_meta, 0), np.expand_dims(intrinsic_matrix_gt, 0)]
+tensorboard = k.callbacks.TensorBoard(histogram_freq=1, write_grads=True, write_images=True,
+                                      write_graph=True)
+val_rot = activations["target_poses"][:, :, :3, :3]
+val_trans = np.expand_dims(activations["target_poses"][:, :, :3, 3], -1)
+
+hist = test_model.fit(x, [np.zeros((1, )), np.zeros((1, )), np.zeros((1, ))], epochs=200,
+                      callbacks=[tensorboard],
+                      validation_data=(x, [val_trans, val_rot, np.zeros(1,)]))
+                      # validation_split=1.)
+
