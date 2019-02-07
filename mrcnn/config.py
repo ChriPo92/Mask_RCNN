@@ -220,6 +220,7 @@ class Config(object):
     #   - pointnet --> uses a pointnet-like architecture
     #   - both --> uses both and adds the output afterwards
     POSE_ESTIMATION_METHOD = "image_features"
+    POINTNET_VECTOR_SIZE = 1024
 
     # use depth-aware operation
     USE_DEPTH_AWARE_OPS = False

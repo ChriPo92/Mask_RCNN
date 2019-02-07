@@ -253,10 +253,12 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
                                [xyz_models, positive_class_ids])  # [pos_ix, 3, N]
 
     chamfer_loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
-    transl_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
-                            name="mrcnn_pose_loss/transl_error")([y_true_t, y_pred_t])
-    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
+    # rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
+    #                         name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
+    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.losses.huber_loss(y[0], y[1], delta=2.0)),
                             name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
+    huber_trans_loss = KL.Lambda(lambda y: tf.reduce_mean(huber_loss(tf.norm(y[0]-y[1], axis=-1), 2.0)),
+                                name="mrcnn_pose_loss/huber_trans")([y_true_t, y_pred_t])
     # loss = KL.Lambda(lambda y: tf.cond(tf.greater(tf.size(y[2]), tf.constant(0)),
     #                                    lambda: chamfer_distance_loss(y[0], y[1], y[2], y[3], y[4]),
     #                                    lambda: tf.constant(0.0)), name="mrcnn_pose_loss/loss")(
@@ -267,7 +269,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # loss = K.mean(loss)
     # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
     total_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2],
-                           name="mrcnn_pose_loss/total_loss")([chamfer_loss, transl_loss, rot_loss])
+                           name="mrcnn_pose_loss/total_loss")([huber_trans_loss, rot_loss, chamfer_loss])
     return total_loss
 
 
@@ -340,6 +342,18 @@ def mrcnn_pose_loss_model(classes=22, rois=200, N=2640):
                      outputs=[target_trans, target_rot, pred_trans, pred_rot, positive_ix, positive_class_ids, indices,
                               y_true_t, y_true_r, y_pred_t, y_pred_r, pos_xyz_models, loss])
     return model
+
+
+##### from Frustrum
+# is used as:
+#     center_dist = tf.norm(center_label - end_points['center'], axis=-1)
+#     center_loss = huber_loss(center_dist, delta=2.0)
+def huber_loss(error, delta):
+    abs_error = tf.abs(error)
+    quadratic = tf.minimum(abs_error, delta)
+    linear = (abs_error - quadratic)
+    losses = 0.5 * quadratic**2 + delta * linear
+    return tf.reduce_mean(losses)
 
 
 class ChamferLossTest(tf.test.TestCase):

@@ -73,6 +73,8 @@ class InferenceConfig(config.__class__):
     IMAGES_PER_GPU = 1
     USE_DEPTH_AWARE_OPS = True
     POSE_ESTIMATION_METHOD = "pointnet"
+    POINTNET_VECTOR_SIZE = 256
+    TRAIN_ROIS_PER_IMAGE = 100
     # DETECTION_MIN_CONFIDENCE = 0.0
 
 
@@ -113,7 +115,7 @@ model = modellib.MaskRCNN(mode=TEST_MODE, model_dir=MODEL_DIR,
                           config=config)
 
 # Load weights
-model.load_weights(MODEL_PATH, by_name=True)
+model.load_weights(MODEL_PATH, by_name=True, exclude=["mrcnn_pose_rot_deconv", "mrcnn_pose_trans_deconv"])
 
 # ## Run Detection
 
@@ -175,12 +177,12 @@ if TEST_MODE is "training":
         ("expand_feature_list", model.keras_model.get_layer("expand_feature_list").output),
         ("mrcnn_pose_feature_conv", model.keras_model.get_layer("mrcnn_pose_feature_conv").output),
         ("point_cloud_repr_concat", model.keras_model.get_layer("point_cloud_repr_concat").output),
-        ("pose_conv1", model.keras_model.get_layer("mrcnn_pointnet_pose_conv1").output),
-        ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_pose_conv2").output),
-        ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_pose_conv3").output),
-        ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_pose_conv4").output),
-        ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_pose_conv5").output),
-        ("sym_max_pool", model.keras_model.get_layer("mrcnn_pose_sym_max_pool").output),
+        ("pose_conv1", model.keras_model.get_layer("mrcnn_pointnet_trans_conv1").output),
+        ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_trans_conv2").output),
+        ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_trans_conv3").output),
+        ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").output),
+        ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").output),
+        ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").output),
         ("rot_deconv", model.keras_model.get_layer("mrcnn_pose_rot_deconv").output),
         ("rot_conv", model.keras_model.get_layer("mrcnn_pose_rot_conv").output),
         ("trans_deconv", model.keras_model.get_layer("mrcnn_pose_trans_deconv").output),
@@ -189,32 +191,32 @@ if TEST_MODE is "training":
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").output),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").output),
         ("pose_target_trans", model.keras_model.get_layer("mrcnn_pose_loss/target_trans").output),
-        ("pose_target_rot", model.keras_model.get_layer("mrcnn_pose_loss/target_rot").output),
+        # ("pose_target_rot", model.keras_model.get_layer("mrcnn_pose_loss/target_rot").output),
         ("pose_pred_trans", model.keras_model.get_layer("mrcnn_pose_loss/pred_trans_transposed").output),
-        ("pose_pred_rot", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_transposed").output),
+        # ("pose_pred_rot", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_transposed").output),
         ("pose_positive_ix", model.keras_model.get_layer("mrcnn_pose_loss/positive_ix").output),
         ("pose_positive_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/positive_class_ids").output),
         ("pose_indices", model.keras_model.get_layer("mrcnn_pose_loss/indices").output),
         ("pose_y_true_t", model.keras_model.get_layer("mrcnn_pose_loss/y_true_t").output),
-        ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").output),
+        # ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").output),
         ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").output),
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
-        ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
-        ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
-        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").output),
-        ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
+        # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
+        # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
+        # ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").output),
+        # ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
         ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
         ########### from function - chamfer_distance_loss_keras ###########
-        ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
-        ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
-        ("transposed_target_models", model.keras_model.get_layer("transposed_target_models").output),
-        ("added_target_models", model.keras_model.get_layer("added_target_models").output),
-        ("NNDistance1", model.keras_model.get_layer("NNDistance").output[0]),
-        ("NNDistance2", model.keras_model.get_layer("NNDistance").output[2]),
-        ("reduced_sum1", model.keras_model.get_layer("reduced_mean1").output),
-        ("reduced_sum2", model.keras_model.get_layer("reduced_mean2").output),
-        ("added_reduced_sum", model.keras_model.get_layer("added_reduced_mean").output),
-        ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output),
+        # ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
+        # ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
+        # ("transposed_target_models", model.keras_model.get_layer("transposed_target_models").output),
+        # ("added_target_models", model.keras_model.get_layer("added_target_models").output),
+        # ("NNDistance1", model.keras_model.get_layer("NNDistance").output[0]),
+        # ("NNDistance2", model.keras_model.get_layer("NNDistance").output[2]),
+        # ("reduced_sum1", model.keras_model.get_layer("reduced_mean1").output),
+        # ("reduced_sum2", model.keras_model.get_layer("reduced_mean2").output),
+        # ("added_reduced_sum", model.keras_model.get_layer("added_reduced_mean").output),
+        # ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").output),
         ######## Feature Maps ######
         ("fpn_p2", model.keras_model.get_layer("fpn_p2").output),
         ("fpn_p3", model.keras_model.get_layer("fpn_p3").output),
@@ -284,7 +286,12 @@ np.testing.assert_equal(pred_trans2, np.reshape(np.transpose(pred_trans1,
 pred_trans3 = np.transpose(pred_trans2, [0, 3, 1, 2])
 np.testing.assert_equal(pred_trans3, activations["pose_pred_trans"])
 tci = activations["pose_target_class_ids"]
-pred_trans3[0][tci[0]]
+
+#visualize the cropped and resized depths
+fig, ax = plt.subplots(4, 4)
+roi_depth_images = activations["roi_align_pose_depth"][0]
+for x, y in np.ndindex(ax.shape):
+    ax[x, y].imshow(np.squeeze(roi_depth_images[x+y]))
 
 ##### test for correct shapes ####
 # batch_times_num_rois = activations["pose_target_class_ids"].shape
@@ -317,47 +324,48 @@ assert np.array_equal(np.where(activations["target_class_ids"][0] > 0)[0], activ
 index = np.searchsorted(classes.reshape(-1), det_class_ids, sorter=np.argsort(classes.reshape(-1)))
 det_class_indeces = np.take(np.argsort(classes.reshape(-1)), index, mode="clip")
 # TODO: this only works for this specific dataset were the pad
-for i in range(det_count):
-    corresponding_pose = poses[:, :, det_class_indeces[i]].astype("float32")
-    assert classes[det_class_indeces[i]][0] == activations["pose_target_class_ids"][i]
-    np.testing.assert_allclose(activations["pose_y_true_r"][i], corresponding_pose[:3, :3], rtol=1e-5)
-    np.testing.assert_allclose(activations["pose_y_true_t"][i],
-                               np.expand_dims(corresponding_pose[:3, 3], axis=0), rtol=1e-5)
-    concat_pose = np.concatenate([activations["pose_y_true_r"][i],
-                                  np.transpose(activations["pose_y_true_t"], [0, 2, 1])[i]], axis=1)
-    np.testing.assert_allclose(concat_pose, corresponding_pose, rtol=1e-5)
+# for i in range(det_count):
+#     corresponding_pose = poses[:, :, det_class_indeces[i]].astype("float32")
+#     assert classes[det_class_indeces[i]][0] == activations["pose_target_class_ids"][i]
+#     np.testing.assert_allclose(activations["pose_y_true_r"][i], corresponding_pose[:3, :3], rtol=1e-5)
+#     np.testing.assert_allclose(activations["pose_y_true_t"][i],
+#                                np.expand_dims(corresponding_pose[:3, 3], axis=0), rtol=1e-5)
+#     concat_pose = np.concatenate([activations["pose_y_true_r"][i],
+#                                   np.transpose(activations["pose_y_true_t"], [0, 2, 1])[i]], axis=1)
+#     np.testing.assert_allclose(concat_pose, corresponding_pose, rtol=1e-5)
 # check that the selected point clouds are the correct ones for the object inside the roi
 # check that rois with the same gt_id have selected the same point_cloud
 for i in np.unique(det_class_ids):
     ids = np.where(det_class_ids == i)[0]
-    assert all_equal(activations["pose_pos_xyz_models"][ids])
+    # assert all_equal(activations["pose_pos_xyz_models"][ids])
 #TODO: check that the poses and translations and their groundtruths are on the same scale (rel. image, vs world?)
 
 # transl is [n, 1, 3] and needs to be [N, 3, 1] to concatenate to [N, 3, 4] poses
-concat_poses = np.concatenate([activations["pose_y_true_r"], np.transpose(activations["pose_y_true_t"], [0, 2, 1])], axis=2)
-visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix_gt)
-models = np.transpose(activations["pose_pos_xyz_models"], [0, 2, 1])
-homogeneous_models = np.concatenate([models, np.tile([1], (models.shape[0], models.shape[1], 1))], axis=2)
-trans_hom_models = np.matmul(concat_poses, np.transpose(homogeneous_models, [0, 2, 1])).transpose([0, 2, 1])
-np.testing.assert_allclose(trans_hom_models, activations["added_target_models"], rtol=1e-3)
-identity_poses = np.zeros_like(concat_poses)
-identity_poses[:, 0, 0] = 1
-identity_poses[:, 1, 1] = 1
-identity_poses[:, 2, 2] = 1
-
-visualize.visualize_pointcloud_hulls(image, concat_poses, models,
-                                     activations["pose_positive_class_ids"], intrinsic_matrix_gt)
-# visualize the target models, that are calculated using the gt_poses in the chamfer loss function
-visualize.visualize_pointcloud_hulls(image, identity_poses, activations["added_target_models"],
-                                     activations["pose_positive_class_ids"], intrinsic_matrix_gt)
-u, s, vh = np.linalg.svd(activations["pose_y_pred_r"])
-r = np.matmul(u, vh)
+# concat_poses = np.concatenate([activations["pose_y_true_r"], np.transpose(activations["pose_y_true_t"], [0, 2, 1])], axis=2)
+# visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix_gt)
+# models = np.transpose(activations["pose_pos_xyz_models"], [0, 2, 1])
+# homogeneous_models = np.concatenate([models, np.tile([1], (models.shape[0], models.shape[1], 1))], axis=2)
+# trans_hom_models = np.matmul(concat_poses, np.transpose(homogeneous_models, [0, 2, 1])).transpose([0, 2, 1])
+# # this test fails sometimes with a mismatch of < 1e-3 %
+# # np.testing.assert_allclose(trans_hom_models, activations["added_target_models"], rtol=1e-3)
+# identity_poses = np.zeros_like(concat_poses)
+# identity_poses[:, 0, 0] = 1
+# identity_poses[:, 1, 1] = 1
+# identity_poses[:, 2, 2] = 1
+#
+# visualize.visualize_pointcloud_hulls(image, concat_poses, models,
+#                                      activations["pose_positive_class_ids"], intrinsic_matrix_gt)
+# # visualize the target models, that are calculated using the gt_poses in the chamfer loss function
+# visualize.visualize_pointcloud_hulls(image, identity_poses, activations["added_target_models"],
+#                                      activations["pose_positive_class_ids"], intrinsic_matrix_gt)
+# u, s, vh = np.linalg.svd(activations["pose_y_pred_r"])
+# r = np.matmul(u, vh)
 # TODO: this should be the same somehow, but tf return the adjoint of v and np does not
 # still they should be the same if tf.linalg.matmul(u,v, adjoint_b=True) is used, but its not
 # np.testing.assert_allclose(r, activations["pose_pred_rot_svd_matmul"], rtol=1e-3)
-concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
-                               np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
-visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
+# concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
+#                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
+# visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
 
 
 rois = k.layers.Input((config.TRAIN_ROIS_PER_IMAGE, 4))
@@ -370,31 +378,137 @@ image_meta_in = k.layers.Input(image_meta.shape)
 intrinsic_matrices = k.layers.Input(intrinsic_matrix.shape)
 trans, rot = build_fpn_pointnet_pose_graph(rois, [P2, P3, P4, P5], depth_image, image_meta_in, intrinsic_matrices, config)
 
-
+#
 optimizer = k.optimizers.SGD(
             lr=config.LEARNING_RATE, momentum=config.LEARNING_MOMENTUM,
             clipnorm=config.GRADIENT_CLIP_NORM)
-target_poses = k.layers.Input(tensor=tf.constant(activations["pose_target_poses"].reshape((config.IMAGES_PER_GPU, config.TRAIN_ROIS_PER_IMAGE, 4, 4))))
-target_class_ids = k.layers.Input(tensor=tf.constant(activations["pose_target_class_ids"].reshape((config.IMAGES_PER_GPU, -1))))
+# optimizer = k.optimizers.Nadam(lr=0.0001)
+
+target_poses = activations["pose_target_poses"].reshape((config.IMAGES_PER_GPU, config.TRAIN_ROIS_PER_IMAGE, 4, 4))
+target_poses_inp = k.layers.Input(batch_shape=target_poses.shape)
+target_class_ids = activations["pose_target_class_ids"].reshape((config.IMAGES_PER_GPU, -1))
+target_class_ids_inp = k.layers.Input(batch_shape=target_class_ids.shape)
 # because keras is retarded
-target_poses._keras_shape = (None, None, 4, 4)
+target_poses_inp._keras_shape = (None, None, 4, 4)
 xyz = k.layers.Input(tensor=tf.constant(xyz_models))
-loss = mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, trans, rot, xyz, config, 2620)
-inputs = [rois, P2, P3, P4, P5, depth_image, image_meta_in, intrinsic_matrices, target_poses, target_class_ids, xyz]
+loss = mrcnn_pose_loss_graph_keras(target_poses_inp, target_class_ids_inp, trans, rot, xyz, config, 2620)
+inputs = [rois, P2, P3, P4, P5, depth_image, image_meta_in, intrinsic_matrices, target_poses_inp, target_class_ids_inp, xyz]
 test_model = k.Model(inputs=inputs, outputs=[trans, rot, loss])
 def custom_loss(y_true, y_pred):
     return y_pred
 test_model.compile(optimizer, loss=custom_loss, loss_weights=[0, 0, 1])
 x = [activations["rois"], activations["fpn_p2"], activations["fpn_p3"],
               activations["fpn_p4"], activations["fpn_p5"], image[np.newaxis, :, :, 3, np.newaxis],
-             np.expand_dims(image_meta, 0), np.expand_dims(intrinsic_matrix_gt, 0)]
+             np.expand_dims(image_meta, 0), np.expand_dims(intrinsic_matrix_gt, 0), target_poses, target_class_ids]
 tensorboard = k.callbacks.TensorBoard(histogram_freq=1, write_grads=True, write_images=True,
                                       write_graph=True)
 val_rot = activations["target_poses"][:, :, :3, :3]
 val_trans = np.expand_dims(activations["target_poses"][:, :, :3, 3], -1)
+# for the TensorboardCallback there is a check that all inputs have the same batch number and all inputs
+# are given for validation. This is not possible with deleting the xyz_input (which is constant) from
+# the inputs
+test_model.inputs = test_model.inputs[:-1]
+# test_model.metrics_tensors += [trans, rot]
+class monitor_translation_during_training(k.callbacks.Callback):
+    def __init__(self, x):
+        self.losses = None
+        self.loss_translations = None
+        self.translations = None
+        self.loss_rotations = None
+        self.rotations=None
 
-hist = test_model.fit(x, [np.zeros((1, )), np.zeros((1, )), np.zeros((1, ))], epochs=200,
-                      callbacks=[tensorboard],
-                      validation_data=(x, [val_trans, val_rot, np.zeros(1,)]))
+        self.x = x
+
+        self.pred_func = None
+
+
+    def on_train_begin(self, logs=None):
+        if logs is None:
+            logs = {}
+        outputs = [self.model.get_layer("mrcnn_pose_loss/y_pred_t").output,
+                   self.model.get_layer("mrcnn_pose_loss/y_pred_r").output]
+        target_outputs = [self.model.get_layer("mrcnn_pose_loss/y_true_t").output,
+                   self.model.get_layer("mrcnn_pose_loss/y_true_r").output]
+        self.pred_func = k.backend.function(inputs=self.model.inputs, outputs=outputs)
+        self.target_func = k.backend.function(inputs=self.model.inputs, outputs=target_outputs)
+        trans, rot = self.target_func(self.x)
+        self.target_trans = trans
+        self.target_rot = rot
+        self.losses=[]
+        self.translations =[]
+        self.rotations = []
+        self.loss_translations = []
+        self.loss_rotations = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        if logs is None:
+            logs = {}
+        predictions = self.model.predict_on_batch(self.x)
+        loss_preds = self.pred_func(x)
+        self.translations.append(predictions[0][0])
+        self.rotations.append(predictions[1][0])
+        self.loss_translations.append(loss_preds[0])
+        self.loss_rotations.append(loss_preds[1])
+        self.losses.append(predictions[2])
+        return
+
+value_monitor = monitor_translation_during_training(x)
+hist = test_model.fit(x, [np.zeros((1, )), np.zeros((1, )), np.zeros((1, ))], batch_size=1, epochs=150,
+                      callbacks=[tensorboard, value_monitor],
+                      validation_data=(x,[np.expand_dims(val_trans, -1), np.expand_dims(val_rot, -1), np.zeros(1,)]))
                       # validation_split=1.)
 
+from mpl_toolkits.mplot3d import Axes3D
+trans_steps = []
+rot_steps = []
+obj_id = 1
+for step in range(len(value_monitor.loss_translations)):
+    trans_steps.append(value_monitor.loss_translations[step][obj_id])
+    u, s, vh = np.linalg.svd(value_monitor.loss_rotations[step][obj_id])
+    r = np.matmul(u, vh)
+    rot_steps.append(r)
+trans_steps = np.squeeze(np.array(trans_steps))
+rot_steps = np.array(rot_steps)
+t_trans = np.squeeze(value_monitor.target_trans[obj_id])
+t_rot = np.squeeze(value_monitor.target_rot[obj_id])
+
+
+def make_quiver_plot(trans, rot, target_trans, target_rot, plot_arrows=True):
+    origin = np.array([0, 0, 0])
+    x = np.array([0.5, 0, 0])
+    y = np.array([0, 0.5, 0])
+    z = np.array([0, 0, 0.5])
+    X = trans[:, 0]
+    Y = trans[:, 1]
+    Z = trans[:, 2]
+    r_x = np.matmul(rot, x)
+    r_y = np.matmul(rot, y)
+    r_z = np.matmul(rot, z)
+    t_x = np.matmul(target_rot, x)
+    t_y = np.matmul(target_rot, y)
+    t_z = np.matmul(target_rot, z)
+    U_x = r_x[:, 0]
+    U_y = r_y[:, 0]
+    U_z = r_z[:, 0]
+    V_x = r_x[:, 1]
+    V_y = r_y[:, 1]
+    V_z = r_z[:, 1]
+    W_x = r_x[:, 2]
+    W_y = r_y[:, 2]
+    W_z = r_z[:, 2]
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot(trans[:, 0], trans[:, 1], zs=trans[:, 2])
+    if plot_arrows:
+        ax.quiver(X, Y, Z, U_x, V_x, W_x, colors=[1, 0, 0, 1])
+        ax.quiver(X, Y, Z, U_y, V_y, W_y, colors=[0, 1, 0, 1])
+        ax.quiver(X, Y, Z, U_z, V_z, W_z, colors=[1, 0, 1, 1])
+    ax.scatter(target_trans[0], target_trans[1], zs=target_trans[2], c="r")
+    ax.quiver(target_trans[0], target_trans[1], target_trans[2],
+              t_x[0], t_x[1], t_x[2], colors=[1, 0, 0, 1])
+    ax.quiver(target_trans[0], target_trans[1], target_trans[2],
+              t_y[0], t_y[1], t_y[2], colors=[0, 1, 0, 1])
+    ax.quiver(target_trans[0], target_trans[1], target_trans[2],
+              t_z[0], t_z[1], t_z[2], colors=[1, 0, 1, 1])
+
+make_quiver_plot(trans_steps, rot_steps, t_trans, t_rot, False)

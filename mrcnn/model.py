@@ -489,11 +489,14 @@ class PyramidROIAlign(KE.Layer):
                 method="bilinear"))
             # repeat the same operation for the depth input image, so that 3D
             # informations can be retained
-            # TODO: check if this is correct
+            # method = "nearest" is taken here because there are a lot of faulty
+            # pixels in the depth image that are 0, and with bilinear rescaling
+            # these end upinfluence the pixel values too much
+
             if self.depth_image is not None:
                 pooled_depth.append(tf.image.crop_and_resize(
                 self.depth_image, level_boxes, box_indices, self.pool_shape,
-                method="bilinear"))
+                method="nearest"))
 
         # Pack pooled features into one tensor
         pooled = tf.concat(pooled, axis=0)
@@ -1346,6 +1349,43 @@ class FeaturePointCloud(KE.Layer):
                         image_shape[:2] + (feature_maps, image_shape[-1])]
         return output_shape
 
+def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn, name, vector_size=1024):
+    # transform to [batch, num_rois, h*w(576), 6, 16]
+    x = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv1")(point_cloud_tensor)
+    x = KL.TimeDistributed(BatchNorm(),
+                                    name=f'mrcnn_pointnet_{name}_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, h*w(576), 4, 32]
+    x = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                                    name=f'mrcnn_pointnet_{name}_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, h*w(576), 1, 64]
+    x = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv3")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                                    name=f'mrcnn_pointnet_{name}_bn3')(x, training=train_bn)
+
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, h*w(576), 1, 256]
+    x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv4")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                                    name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, h*w(576), 1, vector_size]
+    x = KL.TimeDistributed(KL.Conv2D(vector_size, (1, 1), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv5")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                                    name=f'mrcnn_pointnet_{name}_bn5')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, 1, 1, vector_size]
+    x = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
+                                    name=f"mrcnn_{name}_sym_max_pool")(x)
+    return x
+
 def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, intrinsic_matrices,
                                     config, pool_size=24, train_bn=True):
     """Builds the computation graph of the pose estimation head of Feature Pyramid Network.
@@ -1366,6 +1406,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     x, d = PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
                            name="roi_align_pointnet_pose")([rois, image_meta] + feature_maps)
     # pcl_list = [batch, num_rois, h*w(576), (xq, y, z)], feature_list = [batch, num_rois, h*w, channels]
+    # TODO: add masking from the previous branch; i.e. use predicted object masks here
     pcl_list, feature_list = FeaturePointCloud((pool_size, pool_size), config,
                                                name="FeaturePointCloud")([rois, x, d, intrinsic_matrices])
     # transfrom to [batch, num_rois, h*w, (x, y, z), 1]
@@ -1382,51 +1423,19 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     feature_list = KL.Activation('relu')(feature_list)
     # merge to [batch, num_rois, h*w(576), 7, 1]
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
-    point_cloud_repr = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
+    concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
                                  name="point_cloud_repr_concat")([pcl_list, feature_list])
-    # transform to [batch, num_rois, h*w(576), 6, 16]
-    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
-                                          name="mrcnn_pointnet_pose_conv1")(point_cloud_repr)
-    point_cloud_repr = KL.TimeDistributed(BatchNorm(),
-                                          name='mrcnn_pointnet_pose_bn1')(point_cloud_repr, training=train_bn)
-    point_cloud_repr = KL.Activation('relu')(point_cloud_repr)
-    # transform to [batch, num_rois, h*w(576), 4, 32]
-    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
-                                          name="mrcnn_pointnet_pose_conv2")(point_cloud_repr)
-    point_cloud_repr = KL.TimeDistributed(BatchNorm(),
-                                          name='mrcnn_pointnet_pose_bn2')(point_cloud_repr, training=train_bn)
-    point_cloud_repr = KL.Activation('relu')(point_cloud_repr)
-    # transform to [batch, num_rois, h*w(576), 1, 64]
-    point_cloud_repr = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
-                                          name="mrcnn_pointnet_pose_conv3")(point_cloud_repr)
-    point_cloud_repr = KL.TimeDistributed(BatchNorm(),
-                                          name='mrcnn_pointnet_pose_bn3')(point_cloud_repr, training=train_bn)
-
-    x = KL.Activation('relu')(point_cloud_repr)
-    # transform to [batch, num_rois, h*w(576), 1, 256]
-    x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
-                           name="mrcnn_pointnet_pose_conv4")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pointnet_pose_bn4')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, h*w(576), 1, 1024]
-    x = KL.TimeDistributed(KL.Conv2D(1024, (1, 1), padding="valid"),
-                           name="mrcnn_pointnet_pose_conv5")(x)
-    x = KL.TimeDistributed(BatchNorm(),
-                           name='mrcnn_pointnet_pose_bn5')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, 1, 1, 1024]
-    shared = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
-                                name="mrcnn_pose_sym_max_pool")(x)
+    trans_repr = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans", config.POINTNET_VECTOR_SIZE)
+    rot_repr = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot", config.POINTNET_VECTOR_SIZE)
     # transform to [batch, num_rois, 3, 3, 256] ?
     rot = KL.TimeDistributed(KL.Deconv2D(256, (3, 3)),
-                             name="mrcnn_pose_rot_deconv")(shared)
+                             name="mrcnn_pose_rot_deconv")(rot_repr)
     # [batch, num_rois, 3, 3, num_classes]
     rot = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="tanh"),
                              name="mrcnn_pose_rot_conv")(rot)
     # transform to [batch, num_rois, 3, 1, 256] ?
     trans = KL.TimeDistributed(KL.Deconv2D(256, (3, 1)),
-                               name="mrcnn_pose_trans_deconv")(shared)
+                               name="mrcnn_pose_trans_deconv")(trans_repr)
     # [batch, num_rois, 3, 1, num_classes]
     trans = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="linear"),
                                name="mrcnn_pose_trans_conv")(trans)
