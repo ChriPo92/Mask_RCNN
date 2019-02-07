@@ -268,8 +268,8 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     #                 K.constant(0.0))
     # loss = K.mean(loss)
     # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
-    total_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2],
-                           name="mrcnn_pose_loss/total_loss")([huber_trans_loss, rot_loss, chamfer_loss])
+    total_loss = KL.Lambda(lambda y: y[0] + y[1],
+                           name="mrcnn_pose_loss/total_loss")([huber_trans_loss, rot_loss])
     return total_loss
 
 

@@ -221,6 +221,7 @@ class Config(object):
     #   - both --> uses both and adds the output afterwards
     POSE_ESTIMATION_METHOD = "image_features"
     POINTNET_VECTOR_SIZE = 1024
+    POSE_POOL_SIZE = 18
 
     # use depth-aware operation
     USE_DEPTH_AWARE_OPS = False

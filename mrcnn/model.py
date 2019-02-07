@@ -1387,7 +1387,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn, name, ve
     return x
 
 def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, intrinsic_matrices,
-                                    config, pool_size=24, train_bn=True):
+                                    config, pool_size=18, train_bn=True):
     """Builds the computation graph of the pose estimation head of Feature Pyramid Network.
 
         rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
@@ -2595,7 +2595,8 @@ class MaskRCNN():
                     point_pose_trans, point_pose_rot = build_fpn_pointnet_pose_graph(rois, mrcnn_feature_maps,
                                                                                      input_depth, input_image_meta,
                                                                                      input_intrinsic_matrices,
-                                                                                     config, 24, config.TRAIN_BN)
+                                                                                     config, config.POSE_POOL_SIZE,
+                                                                                     config.TRAIN_BN)
                     if mrcnn_pose_rot is None and mrcnn_pose_trans is None:
                         mrcnn_pose_trans = point_pose_trans
                         mrcnn_pose_rot = point_pose_rot

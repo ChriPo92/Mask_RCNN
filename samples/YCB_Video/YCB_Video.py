@@ -757,7 +757,7 @@ if __name__ == '__main__':
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
-        num += 30
+        num += 50
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
@@ -779,7 +779,7 @@ if __name__ == '__main__':
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        num += 30
+        num += 50
         layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
@@ -792,10 +792,10 @@ if __name__ == '__main__':
 
         # # Training - Stage 3
         # # Fine tune all layers
-        num += 40
+        num += 80
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
-                        learning_rate=config.LEARNING_RATE / 50,
+                        learning_rate=config.LEARNING_RATE / 20,
                         epochs=num,
                         layers='all',
                         augmentation=augmentation)
