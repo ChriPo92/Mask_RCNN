@@ -641,12 +641,13 @@ if __name__ == '__main__':
                         help='Which annotations to use for the image. For now only "label" or "skeleton" are used')
     args = parser.parse_args()
     print("Command: ", args.command)
-    print("Model: ", args.model)
+    print("Model: ", args.model) #/common/homes/staff/pohl/Code/Python/Mask_RCNN/logs/ycbv20181225T1110/mask_rcnn_ycbv_0300.h5
     print("Dataset: ", args.dataset)
     print("Logs: ", args.logs)
     print("Depth Awareness: ", args.depth_aware)
     print("Continue Training: ", args.continue_training)
     print("Annotation: ", args.annotation)
+    print("Debug: ", args.debug)
 
     if args.debug.lower() != "false":
         from tensorflow.python import debug as tf_debug

@@ -451,7 +451,10 @@ class PyramidROIAlign(KE.Layer):
         # the fact that our coordinates are normalized here.
         # e.g. a 224x224 ROI (in pixels) maps to P4
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-        roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+        # TODO: FIX NANs appearing in this tensor
+        area = h * w
+        roi_level = log2_graph(tf.sqrt(area) / (224.0 / tf.sqrt(image_area)))
+        roi_level = tf.where(area > 0, roi_level, tf.zeros_like(roi_level))
         roi_level = tf.minimum(5, tf.maximum(
             2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
         roi_level = tf.squeeze(roi_level, 2)
