@@ -442,22 +442,23 @@ class PyramidROIAlign(KE.Layer):
         feature_maps = inputs[2:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
-        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
-        h = y2 - y1
-        w = x2 - x1
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2, name="roi_align_area_split")
+        h = tf.math.subtract(y2, y1, name="roi_height")
+        w = tf.math.subtract(x2, x1, name="roi_width")
         # Use shape of first image. Images in a batch must have the same size.
         image_shape = parse_image_meta_graph(image_meta)['image_shape'][0]
         # Equation 1 in the Feature Pyramid Networks paper. Account for
         # the fact that our coordinates are normalized here.
         # e.g. a 224x224 ROI (in pixels) maps to P4
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-        # TODO: FIX NANs appearing in this tensor
-        area = h * w
-        roi_level = log2_graph(tf.sqrt(area) / (224.0 / tf.sqrt(image_area)))
+        # TODO: FIX NANs appearing in this tensor, How is it possible that h*w == 0?
+        area = tf.multiply(h, w, name="roi_area")
+        roi_level = log2_graph(tf.sqrt(area, name="sqrt_area") / (224.0 / tf.sqrt(image_area,
+                                                                name="sqrt_image_area")))
         roi_level = tf.where(area > 0, roi_level, tf.zeros_like(roi_level))
         roi_level = tf.minimum(5, tf.maximum(
-            2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
-        roi_level = tf.squeeze(roi_level, 2)
+            2, 4 + tf.cast(tf.round(roi_level), tf.int32)), name="roi_level")
+        roi_level = tf.squeeze(roi_level, 2, name="squeezed_roi_level")
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         pooled = []
@@ -466,7 +467,7 @@ class PyramidROIAlign(KE.Layer):
             pooled_depth = []
         for i, level in enumerate(range(2, 6)):
             ix = tf.where(tf.equal(roi_level, level))
-            level_boxes = tf.gather_nd(boxes, ix)
+            level_boxes = tf.gather_nd(boxes, ix, name=f"level_boxes_{i}")
 
             # Box indices for crop_and_resize.
             box_indices = tf.cast(ix[:, 0], tf.int32)
@@ -489,7 +490,7 @@ class PyramidROIAlign(KE.Layer):
             # Result: [batch * num_boxes, pool_height, pool_width, channels]
             pooled.append(tf.image.crop_and_resize(
                 feature_maps[i], level_boxes, box_indices, self.pool_shape,
-                method="bilinear"))
+                method="bilinear", name=f"pooled_level_{i}"))
             # repeat the same operation for the depth input image, so that 3D
             # informations can be retained
             # method = "nearest" is taken here because there are a lot of faulty
@@ -499,28 +500,28 @@ class PyramidROIAlign(KE.Layer):
             if self.depth_image is not None:
                 pooled_depth.append(tf.image.crop_and_resize(
                 self.depth_image, level_boxes, box_indices, self.pool_shape,
-                method="nearest"))
+                method="nearest", name=f"pooled_depth_level_{i}"))
 
         # Pack pooled features into one tensor
         pooled = tf.concat(pooled, axis=0)
 
         if self.depth_image is not None:
-            pooled_depth = tf.concat(pooled_depth, axis=0)
+            pooled_depth = tf.concat(pooled_depth, axis=0, name="pooled_depth")
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
-        box_to_level = tf.concat(box_to_level, axis=0)
-        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
+        box_to_level = tf.concat(box_to_level, axis=0, name="box_to_level")
+        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1, name="box_range")
         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range],
-                                 axis=1)
+                                 axis=1, name="box_to_level")
 
         # Rearrange pooled features to match the order of the original boxes
         # Sort box_to_level by batch then box index
         # TF doesn't have a way to sort by two columns, so merge them and sort.
         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
         ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
-            box_to_level)[0]).indices[::-1]
-        ix = tf.gather(box_to_level[:, 2], ix)
-        pooled = tf.gather(pooled, ix)
+            box_to_level)[0], name="top_k_ix").indices[::-1]
+        ix = tf.gather(box_to_level[:, 2], ix, name="gathered_ix")
+        pooled = tf.gather(pooled, ix, name="pooled_image")
 
         # Re-add the batch dimension
         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
@@ -558,10 +559,10 @@ def overlaps_graph(boxes1, boxes2):
     # 2. Compute intersections
     b1_y1, b1_x1, b1_y2, b1_x2 = tf.split(b1, 4, axis=1)
     b2_y1, b2_x1, b2_y2, b2_x2 = tf.split(b2, 4, axis=1)
-    y1 = tf.maximum(b1_y1, b2_y1)
-    x1 = tf.maximum(b1_x1, b2_x1)
-    y2 = tf.minimum(b1_y2, b2_y2)
-    x2 = tf.minimum(b1_x2, b2_x2)
+    y1 = tf.maximum(b1_y1, b2_y1, name="overlaps_graph_max1")
+    x1 = tf.maximum(b1_x1, b2_x1, name="overlaps_graph_max2")
+    y2 = tf.minimum(b1_y2, b2_y2, name="overlaps_graph_max3")
+    x2 = tf.minimum(b1_x2, b2_x2, name="overlaps_graph_max4")
     intersection = tf.maximum(x2 - x1, 0) * tf.maximum(y2 - y1, 0)
     # 3. Compute unions
     b1_area = (b1_y2 - b1_y1) * (b1_x2 - b1_x1)
