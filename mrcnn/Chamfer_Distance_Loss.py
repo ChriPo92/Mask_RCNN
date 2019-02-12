@@ -256,7 +256,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     chamfer_loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
     # rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
     #                         name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
-    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.losses.huber_loss(y[0], y[1], delta=2.0)),
+    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mse(y[0], y[1])),
                             name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
     huber_trans_loss = KL.Lambda(lambda y: tf.reduce_mean(huber_loss(tf.norm(y[0]-y[1], axis=-1), 2.0)),
                                 name="mrcnn_pose_loss/huber_trans")([y_true_t, y_pred_t])
