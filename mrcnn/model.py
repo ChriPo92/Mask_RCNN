@@ -2789,7 +2789,7 @@ class MaskRCNN():
         # optimizer = keras.optimizers.SGD(
         #     lr=learning_rate, momentum=momentum,
         #     clipnorm=self.config.GRADIENT_CLIP_NORM)
-        optimizer = keras.optimizers.Adam(lr=0.001, beta_1=0.9,
+        optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
                                           beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
         # Add Losses
         # First, clear previously set losses to avoid duplication

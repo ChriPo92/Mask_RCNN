@@ -654,6 +654,8 @@ if __name__ == '__main__':
         sess = tf.Session()
         if args.debug == "cli":
             sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+        elif args.debug == "dump":
+            sess = tf_debug.DumpingDebugWrapperSession(sess, "~/Code/Python/Mask_RCNN/logs/debug_dumps/")
         else:
             sess = tf_debug.TensorBoardDebugWrapperSession(sess, "localhost:7000", send_traceback_and_source_code=False)
         KB.set_session(sess)
