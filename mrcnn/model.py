@@ -453,9 +453,10 @@ class PyramidROIAlign(KE.Layer):
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
         # TODO: FIX NANs appearing in this tensor, How is it possible that h*w == 0?
         area = tf.multiply(h, w, name="roi_area")
-        roi_level = log2_graph(tf.sqrt(area, name="sqrt_area") / (224.0 / tf.sqrt(image_area,
-                                                                name="sqrt_image_area")))
-        roi_level = tf.where(area > 0, roi_level, tf.zeros_like(roi_level))
+        with tf.control_dependencies([tf.assert_positive(area)]):
+            roi_level = log2_graph(tf.sqrt(area, name="sqrt_area") / (224.0 / tf.sqrt(image_area,
+                                                                    name="sqrt_image_area")))
+        # roi_level = tf.where(area > 0, roi_level, tf.zeros_like(roi_level))
         roi_level = tf.minimum(5, tf.maximum(
             2, 4 + tf.cast(tf.round(roi_level), tf.int32)), name="roi_level")
         roi_level = tf.squeeze(roi_level, 2, name="squeezed_roi_level")
@@ -1353,7 +1354,8 @@ class FeaturePointCloud(KE.Layer):
                         image_shape[:2] + (feature_maps, image_shape[-1])]
         return output_shape
 
-def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn, name, vector_size=1024):
+def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn,
+                               name, out_number, last_activation="linear", vector_size=1024):
     # transform to [batch, num_rois, h*w(576), 6, 16]
     x = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv1")(point_cloud_tensor)
@@ -1388,7 +1390,47 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn, name, ve
     # transform to [batch, num_rois, 1, 1, vector_size]
     x = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
                                     name=f"mrcnn_{name}_sym_max_pool")(x)
+    # transform to [batch, num_rois, vector_size]
+    x = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(x)
+    # transform to [batch, num_rois, 256]
+    x = KL.TimeDistributed(KL.Dense(256),
+                               name=f"mrcnn_pointnet_{name}_fc1")(x)
+    # [batch, num_rois, 3 * NUM_CLASSES]
+    x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
+                               name=f"mrcnn_pointnet_{name}_fc2")(x)
     return x
+
+class CalcRotMatrix(KL.Layer):
+    def call(self, inputs, **kwargs):
+        """
+        Transformes a Matrix with 2 out of 3 column vectors of a rotation matrix available
+        TODO: This is not correct for now; look at:
+        https://math.stackexchange.com/questions/180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d/476311#476311
+        :param inputs: [batch, num_rois, 3, 2, num_classes]
+        :param kwargs:
+        :return:
+        """
+        # transpose to [batch, num_rois, num_classes, 2, 3]
+        inputs = tf.transpose(inputs, [0, 1, 4, 3, 2], "transpose_inputs")
+        # split the column vectors; [batch, num_rois, num_classes, 3]
+        x_1, x_2 = tf.split(inputs, 2, axis=3, name="split_inputs")
+        x_1 = tf.squeeze(x_1, axis=3, name="squeeze_x_1")
+        x_2 = tf.squeeze(x_2, axis=3, name="squeeze_x_2")
+        # calculate the norm of the vectors
+        x_1_norm = tf.sqrt(tf.reduce_sum(tf.square(x_1), axis=3, keepdims=True) + 1e-8, name="x_1_norm")
+        x_2_norm = tf.sqrt(tf.reduce_sum(tf.square(x_2), axis=3, keepdims=True) + 1e-8, name="x_2_norm")
+        # transfrom them into unit vectors
+        x_1 = x_1 / x_1_norm
+        x_2 = x_2 / x_2_norm
+        # calculate x_3 orthogonal to x_1 and x_2; [batch, num_rois, num_classes, 3]
+        x_3 = tf.linalg.cross(x_1, x_2)
+        # [batch, num_rois, num_classes, 3, 3] --> [batch, num_rois, 3, 3, num_classes]
+        # TODO: check if this is correct
+        rot = tf.transpose(tf.stack([x_1, x_2, x_3], axis=4), [0, 1, 3, 4, 2])
+        return rot
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], 3, 3, input_shape[-1])
 
 def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, intrinsic_matrices,
                                     config, pool_size=18, train_bn=True):
@@ -1429,25 +1471,21 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
     concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
                                  name="point_cloud_repr_concat")([pcl_list, feature_list])
-    trans_repr = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans", config.POINTNET_VECTOR_SIZE)
-    rot_repr = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot", config.POINTNET_VECTOR_SIZE)
-    # transform to [batch, num_rois, 3, 3, 256] ?
-    rot = KL.TimeDistributed(KL.Deconv2D(256, (3, 3)),
-                             name="mrcnn_pose_rot_deconv")(rot_repr)
-    # [batch, num_rois, 3, 3, num_classes]
-    rot = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="tanh"),
-                             name="mrcnn_pose_rot_conv")(rot)
-    # transform to [batch, num_rois, POINTNET_VECTOR_SIZE] ?
-    # TODO: this is actually not fully connected as in the paper; to be so it would have to be Conv(x, (1, 1))
-    trans_repr = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(trans_repr)
-    # transform to [batch, num_rois, 256] ?
-    trans = KL.TimeDistributed(KL.Dense(256),
-                               name="mrcnn_pose_trans_deconv")(trans_repr)
-    # [batch, num_rois, 3 * NUM_CLASSES]
-    trans = KL.TimeDistributed(KL.Dense(3 * config.NUM_CLASSES, activation="linear"),
-                               name="mrcnn_pose_trans_conv")(trans)
+    trans = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans",
+                                       3 * config.NUM_CLASSES, vector_size=config.POINTNET_VECTOR_SIZE)
+    # transform to [batch, num_rois, 3, 1, num_classes]
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
+    rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
+                                     9 * config.NUM_CLASSES, last_activation="sigmoid",
+                                     vector_size=config.POINTNET_VECTOR_SIZE)
+    # [batch, num_rois, 3, 2, num_classes]
+    rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
+                     3, 3, config.NUM_CLASSES), name="rot_reshape")(rot)
+    # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
+    # the third column vector
+    # rot = CalcRotMatrix(name="CalcRotMatrix")(rot)
+
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])
     # with tf.control_dependencies([print_op]):

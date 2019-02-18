@@ -183,10 +183,13 @@ if TEST_MODE is "training":
         ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").output),
         ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").output),
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").output),
-        ("rot_deconv", model.keras_model.get_layer("mrcnn_pose_rot_deconv").output),
-        ("rot_conv", model.keras_model.get_layer("mrcnn_pose_rot_conv").output),
-        ("trans_deconv", model.keras_model.get_layer("mrcnn_pose_trans_deconv").output),
-        ("trans_conv", model.keras_model.get_layer("mrcnn_pose_trans_conv").output),
+        ("rot_fc1", model.keras_model.get_layer("mrcnn_pointnet_rot_fc1").output),
+        ("rot_fc2", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").output),
+        ("trans_fc1", model.keras_model.get_layer("mrcnn_pointnet_trans_fc1").output),
+        ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").output),
+        ("trans_reshape", model.keras_model.get_layer("trans_reshape").output),
+        ("rot_reshape", model.keras_model.get_layer("rot_reshape").output),
+        # ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").output),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").output),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").output),
@@ -249,10 +252,13 @@ if TEST_MODE is "training":
         ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").weights),
         ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").weights),
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").weights),
-        ("rot_deconv", model.keras_model.get_layer("mrcnn_pose_rot_deconv").weights),
-        ("rot_conv", model.keras_model.get_layer("mrcnn_pose_rot_conv").weights),
-        ("trans_deconv", model.keras_model.get_layer("mrcnn_pose_trans_deconv").weights),
-        ("trans_conv", model.keras_model.get_layer("mrcnn_pose_trans_conv").weights),
+        ("rot_fc1", model.keras_model.get_layer("mrcnn_pointnet_rot_fc1").weights),
+        ("rot_fc2", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").weights),
+        ("trans_fc1", model.keras_model.get_layer("mrcnn_pointnet_trans_fc1").weights),
+        ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").weights),
+        ("trans_reshape", model.keras_model.get_layer("trans_reshape").weights),
+        ("rot_reshape", model.keras_model.get_layer("rot_reshape").weights),
+        # ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").weights),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").weights),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").weights),
@@ -346,10 +352,10 @@ xyz_models = np.transpose(df, (0, 2, 1))
 # num_xyz_points = xyz_models.shape[2]
 
 # test that translations given by estimation branch are the ones used to calculate loss
-pred_trans1 = activations["trans_conv"]
+pred_trans1 = activations["trans_reshape"]
 pred_trans2 = np.reshape(pred_trans1, (-1, 1, 3, config.NUM_CLASSES))
-np.testing.assert_equal(pred_trans2, np.reshape(np.transpose(pred_trans1,
-                                                            [0, 1, 3, 2, 4]), (-1, 1, 3, config.NUM_CLASSES)))
+# np.testing.assert_equal(pred_trans2, np.reshape(np.transpose(pred_trans1,
+#                                                             [0, 1, 3, 2, 4]), (-1, 1, 3, config.NUM_CLASSES)))
 pred_trans3 = np.transpose(pred_trans2, [0, 3, 1, 2])
 np.testing.assert_equal(pred_trans3, activations["pose_pred_trans"])
 tci = activations["pose_target_class_ids"]
@@ -385,13 +391,13 @@ for x, y in np.ndindex(ax.shape):
 #### equivalency tests
 
 fig, ax = plt.subplots(2, 2)
-ax[0, 0].hist([weights["mrcnn_mask_0"].flatten(), weights["trans_conv_0"].flatten()])
+ax[0, 0].hist([weights["mrcnn_mask_0"].flatten(), weights["trans_fc2_0"].flatten()])
 ax[0, 0].set_title("Conv Weights[0]")
-ax[0, 1].hist([weights["mrcnn_mask_deconv_0"].flatten(), weights["trans_deconv_0"].flatten()])
+ax[0, 1].hist([weights["mrcnn_mask_deconv_0"].flatten(), weights["trans_fc1_0"].flatten()])
 ax[0, 1].set_title("DeConv Weights[0]")
-ax[1, 0].hist([weights["mrcnn_mask_1"].flatten(), weights["trans_conv_1"].flatten()])
+ax[1, 0].hist([weights["mrcnn_mask_1"].flatten(), weights["trans_fc2_1"].flatten()])
 ax[1, 0].set_title("Conv Weights[1]")
-ax[1, 1].hist([weights["mrcnn_mask_deconv_1"].flatten(), weights["trans_deconv_1"].flatten()])
+ax[1, 1].hist([weights["mrcnn_mask_deconv_1"].flatten(), weights["trans_fc2_1"].flatten()])
 ax[1, 1].set_title("DeConv Weights[1]")
 
 assert np.array_equal(activations["pose_target_class_ids"][:det_count], det_class_ids)
@@ -443,6 +449,24 @@ r = np.matmul(u, vh)
 concat_poses2 = np.concatenate([r,
                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
 visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
+
+
+##### Check correctness of CalcRotMatrix
+# r_m = np.transpose(activations["rot_reshape"], [0, 1, 4, 3, 2])
+# x_1 = r_m[:, :, :, 0, :]
+# x_2 = r_m[:, :, :, 1, :]
+# x_1 /= np.expand_dims(np.sqrt(np.sum(np.square(x_1), axis=3)), axis=-1)
+# x_2 /= np.expand_dims(np.sqrt(np.sum(np.square(x_2), axis=3)), axis=-1)
+# x_3 = np.cross(x_1, x_2)
+# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_1), axis=3)),
+#                            np.ones((1, 100, 22)), rtol=1e-5)
+# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_2), axis=3)),
+#                            np.ones((1, 100, 22)), rtol=1e-5)
+# # TODO: think about the correctness of this approach
+# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_3), axis=3)),
+#                            np.ones((1, 100, 22)), rtol=1e-5)
+
+
 
 
 rois = k.layers.Input((config.TRAIN_ROIS_PER_IMAGE, 4))
