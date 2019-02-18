@@ -280,7 +280,7 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
@@ -302,10 +302,19 @@ class YCBVConfig(Config):
     # TRAIN_ROIS_PER_IMAGE = 70
     USE_DEPTH_AWARE_OPS = False
 
-    LEARNING_RATE = 0.005
+    LEARNING_RATE = 0.0005
+    GRADIENT_CLIP_NORM = 1.0
     ESTIMATE_6D_POSE = True
     POSE_ESTIMATION_METHOD = "pointnet"
     XYZ_MODEL_PATH = os.path.join(os.path.expanduser("~"), "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl")
+    LOSS_WEIGHTS = {
+        "rpn_class_loss": 1.,
+        "rpn_bbox_loss": 1.,
+        "mrcnn_class_loss": 1.,
+        "mrcnn_bbox_loss": 1.,
+        "mrcnn_mask_loss": 1.,
+        "mrcnn_pose_loss/total_loss": 10000.
+    }
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4
@@ -792,7 +801,7 @@ if __name__ == '__main__':
         layers = '4+'
         print("Fine tune Resnet stage 4 and up")
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE/5,
+                    learning_rate=config.LEARNING_RATE/20,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
@@ -804,7 +813,7 @@ if __name__ == '__main__':
         num += 80
         print("Fine tune all layers")
         model.train(dataset_train, dataset_val,
-                        learning_rate=config.LEARNING_RATE / 20,
+                        learning_rate=config.LEARNING_RATE / 100,
                         epochs=num,
                         layers='all',
                         augmentation=augmentation)
