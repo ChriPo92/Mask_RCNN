@@ -1437,12 +1437,17 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     # [batch, num_rois, 3, 3, num_classes]
     rot = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="tanh"),
                              name="mrcnn_pose_rot_conv")(rot)
-    # transform to [batch, num_rois, 3, 1, 256] ?
-    trans = KL.TimeDistributed(KL.Deconv2D(256, (3, 1)),
+    # transform to [batch, num_rois, POINTNET_VECTOR_SIZE] ?
+    # TODO: this is actually not fully connected as in the paper; to be so it would have to be Conv(x, (1, 1))
+    trans_repr = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(trans_repr)
+    # transform to [batch, num_rois, 256] ?
+    trans = KL.TimeDistributed(KL.Dense(256),
                                name="mrcnn_pose_trans_deconv")(trans_repr)
-    # [batch, num_rois, 3, 1, num_classes]
-    trans = KL.TimeDistributed(KL.Conv2D(config.NUM_CLASSES, (1, 1), strides=1, activation="linear"),
+    # [batch, num_rois, 3 * NUM_CLASSES]
+    trans = KL.TimeDistributed(KL.Dense(3 * config.NUM_CLASSES, activation="linear"),
                                name="mrcnn_pose_trans_conv")(trans)
+    trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
+                        3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])
     # with tf.control_dependencies([print_op]):
@@ -3413,10 +3418,16 @@ class MaskRCNN():
         assert self.mode == "training"
         model = self.keras_model
 
-        # Organize desired outputs into an ordered dict
-        outputs = OrderedDict(outputs)
-        for o in outputs.values():
-            assert o is not None
+        # Organize desired outputs into an dict
+        outputs = dict(outputs)
+        for key in list(outputs.keys()):
+            value = outputs[key]
+            assert value is not None
+            if type(value) is list:
+                del outputs[key]
+                for i in range(len(value)):
+                    outputs[key + f"_{i}"] = value[i]
+
 
         if return_gradients:
             self.compile(self.config.LEARNING_RATE, self.config.LEARNING_MOMENTUM)

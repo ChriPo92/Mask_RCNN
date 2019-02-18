@@ -39,7 +39,7 @@ import keras as k
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_pointnet.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
 DEBUG = False
 if DEBUG:
     import keras.backend as KB
@@ -224,6 +224,73 @@ if TEST_MODE is "training":
         ("fpn_p5", model.keras_model.get_layer("fpn_p5").output),
         ##### mrcnn_mask ####
         ("mrcnn_mask", model.keras_model.get_layer("mrcnn_mask").output),
+        ("mrcnn_mask_deconv", model.keras_model.get_layer("mrcnn_mask_deconv").output),
+
+    ], return_gradients=False)
+    weights = model.run_trainings_graph(dataset, image_id, [
+        ("rois", model.keras_model.get_layer("proposal_targets").weights),
+        ("target_class_ids", model.keras_model.get_layer("proposal_targets").weights),
+        ("target_poses", model.keras_model.get_layer("proposal_targets").weights),
+        ("mrcnn_class", model.keras_model.get_layer("mrcnn_class").weights),
+        ("mrcnn_bbox", model.keras_model.get_layer("mrcnn_bbox").weights),
+        ("mrcnn_class_logits", model.keras_model.get_layer("mrcnn_class_logits").weights),
+        ######## from function - build_fpn_pointnet_pose_graph ############
+        ("pcl_list", model.keras_model.get_layer("FeaturePointCloud").weights),
+        ("feature_list", model.keras_model.get_layer("FeaturePointCloud").weights),
+        ("roi_align_pose_image", model.keras_model.get_layer("roi_align_pointnet_pose").weights),
+        ("roi_align_pose_depth", model.keras_model.get_layer("roi_align_pointnet_pose").weights),
+        ("expand_pcl_list", model.keras_model.get_layer("expand_pcl_list").weights),
+        ("expand_feature_list", model.keras_model.get_layer("expand_feature_list").weights),
+        ("mrcnn_pose_feature_conv", model.keras_model.get_layer("mrcnn_pose_feature_conv").weights),
+        ("point_cloud_repr_concat", model.keras_model.get_layer("point_cloud_repr_concat").weights),
+        ("pose_conv1", model.keras_model.get_layer("mrcnn_pointnet_trans_conv1").weights),
+        ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_trans_conv2").weights),
+        ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_trans_conv3").weights),
+        ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").weights),
+        ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").weights),
+        ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").weights),
+        ("rot_deconv", model.keras_model.get_layer("mrcnn_pose_rot_deconv").weights),
+        ("rot_conv", model.keras_model.get_layer("mrcnn_pose_rot_conv").weights),
+        ("trans_deconv", model.keras_model.get_layer("mrcnn_pose_trans_deconv").weights),
+        ("trans_conv", model.keras_model.get_layer("mrcnn_pose_trans_conv").weights),
+        ########### from function - mrcnn_pose_loss_graph_keras ###########
+        ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").weights),
+        ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").weights),
+        ("pose_target_trans", model.keras_model.get_layer("mrcnn_pose_loss/target_trans").weights),
+        # ("pose_target_rot", model.keras_model.get_layer("mrcnn_pose_loss/target_rot").weights),
+        ("pose_pred_trans", model.keras_model.get_layer("mrcnn_pose_loss/pred_trans_transposed").weights),
+        # ("pose_pred_rot", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_transposed").weights),
+        ("pose_positive_ix", model.keras_model.get_layer("mrcnn_pose_loss/positive_ix").weights),
+        ("pose_positive_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/positive_class_ids").weights),
+        ("pose_indices", model.keras_model.get_layer("mrcnn_pose_loss/indices").weights),
+        ("pose_y_true_t", model.keras_model.get_layer("mrcnn_pose_loss/y_true_t").weights),
+        # ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").weights),
+        ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").weights),
+        ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").weights),
+        # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").weights),
+        # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").weights),
+        # ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").weights),
+        # ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").weights),
+        ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").weights),
+        ########### from function - chamfer_distance_loss_keras ###########
+        # ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").weights),
+        # ("added_pred_models", model.keras_model.get_layer("added_pred_models").weights),
+        # ("transposed_target_models", model.keras_model.get_layer("transposed_target_models").weights),
+        # ("added_target_models", model.keras_model.get_layer("added_target_models").weights),
+        # ("NNDistance1", model.keras_model.get_layer("NNDistance").weights[0]),
+        # ("NNDistance2", model.keras_model.get_layer("NNDistance").weights[2]),
+        # ("reduced_sum1", model.keras_model.get_layer("reduced_mean1").weights),
+        # ("reduced_sum2", model.keras_model.get_layer("reduced_mean2").weights),
+        # ("added_reduced_sum", model.keras_model.get_layer("added_reduced_mean").weights),
+        # ("chamfer_loss", model.keras_model.get_layer("mrcnn_chamfer_loss").weights),
+        ######## Feature Maps ######
+        ("fpn_p2", model.keras_model.get_layer("fpn_p2").weights),
+        ("fpn_p3", model.keras_model.get_layer("fpn_p3").weights),
+        ("fpn_p4", model.keras_model.get_layer("fpn_p4").weights),
+        ("fpn_p5", model.keras_model.get_layer("fpn_p5").weights),
+        ##### mrcnn_mask ####
+        ("mrcnn_mask", model.keras_model.get_layer("mrcnn_mask").weights),
+        ("mrcnn_mask_deconv", model.keras_model.get_layer("mrcnn_mask_deconv").weights),
 
     ], return_gradients=False)
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
@@ -316,6 +383,16 @@ for x, y in np.ndindex(ax.shape):
 # assert activations["reduced_sum1"].shape == tuple()
 # assert activations["reduced_sum2"].shape == tuple()
 #### equivalency tests
+
+fig, ax = plt.subplots(2, 2)
+ax[0, 0].hist([weights["mrcnn_mask_0"].flatten(), weights["trans_conv_0"].flatten()])
+ax[0, 0].set_title("Conv Weights[0]")
+ax[0, 1].hist([weights["mrcnn_mask_deconv_0"].flatten(), weights["trans_deconv_0"].flatten()])
+ax[0, 1].set_title("DeConv Weights[0]")
+ax[1, 0].hist([weights["mrcnn_mask_1"].flatten(), weights["trans_conv_1"].flatten()])
+ax[1, 0].set_title("Conv Weights[1]")
+ax[1, 1].hist([weights["mrcnn_mask_deconv_1"].flatten(), weights["trans_deconv_1"].flatten()])
+ax[1, 1].set_title("DeConv Weights[1]")
 
 assert np.array_equal(activations["pose_target_class_ids"][:det_count], det_class_ids)
 assert np.array_equal(np.where(activations["target_class_ids"][0] > 0)[0], activations["pose_positive_ix"])
