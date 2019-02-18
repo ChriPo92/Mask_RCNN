@@ -73,7 +73,7 @@ class InferenceConfig(config.__class__):
     IMAGES_PER_GPU = 1
     USE_DEPTH_AWARE_OPS = True
     POSE_ESTIMATION_METHOD = "pointnet"
-    POINTNET_VECTOR_SIZE = 256
+    POINTNET_VECTOR_SIZE = 1024
     TRAIN_ROIS_PER_IMAGE = 100
     # DETECTION_MIN_CONFIDENCE = 0.0
 
@@ -222,6 +222,8 @@ if TEST_MODE is "training":
         ("fpn_p3", model.keras_model.get_layer("fpn_p3").output),
         ("fpn_p4", model.keras_model.get_layer("fpn_p4").output),
         ("fpn_p5", model.keras_model.get_layer("fpn_p5").output),
+        ##### mrcnn_mask ####
+        ("mrcnn_mask", model.keras_model.get_layer("mrcnn_mask").output),
 
     ], return_gradients=False)
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
@@ -269,8 +271,6 @@ camera.intrinsic_matrix = intrinsic_matrix
 pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_im, camera)
 # pred_pc = o3d.PointCloud()
 # pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
-# TODO: investigate, why there is this strange cone in the frusttrum pcds
-# this might have something to do with the way the depth is pooled
 # o3d.draw_geometries([roi_pc, pcd])
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
@@ -358,14 +358,14 @@ for i in np.unique(det_class_ids):
 # # visualize the target models, that are calculated using the gt_poses in the chamfer loss function
 # visualize.visualize_pointcloud_hulls(image, identity_poses, activations["added_target_models"],
 #                                      activations["pose_positive_class_ids"], intrinsic_matrix_gt)
-# u, s, vh = np.linalg.svd(activations["pose_y_pred_r"])
-# r = np.matmul(u, vh)
+u, s, vh = np.linalg.svd(activations["pose_y_pred_r"])
+r = np.matmul(u, vh)
 # TODO: this should be the same somehow, but tf return the adjoint of v and np does not
 # still they should be the same if tf.linalg.matmul(u,v, adjoint_b=True) is used, but its not
 # np.testing.assert_allclose(r, activations["pose_pred_rot_svd_matmul"], rtol=1e-3)
-# concat_poses2 = np.concatenate([activations["pose_pred_rot_svd_matmul"],
-#                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
-# visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
+concat_poses2 = np.concatenate([r,
+                               np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
+visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
 
 
 rois = k.layers.Input((config.TRAIN_ROIS_PER_IMAGE, 4))
@@ -393,6 +393,9 @@ target_poses_inp._keras_shape = (None, None, 4, 4)
 xyz = k.layers.Input(tensor=tf.constant(xyz_models))
 loss = mrcnn_pose_loss_graph_keras(target_poses_inp, target_class_ids_inp, trans, rot, xyz, config, 2620)
 inputs = [rois, P2, P3, P4, P5, depth_image, image_meta_in, intrinsic_matrices, target_poses_inp, target_class_ids_inp, xyz]
+# loss_model = k.Model(inputs=inputs, outputs=[loss])
+# y_pred_t = loss_model.get_layer("mrcnn_pose_loss/y_pred_t")
+# y_pred_r = loss_model.get_layer("mrcnn_pose_loss/y_pred_r")
 test_model = k.Model(inputs=inputs, outputs=[trans, rot, loss])
 def custom_loss(y_true, y_pred):
     return y_pred
@@ -453,9 +456,9 @@ class monitor_translation_during_training(k.callbacks.Callback):
         return
 
 value_monitor = monitor_translation_during_training(x)
-hist = test_model.fit(x, [np.zeros((1, )), np.zeros((1, )), np.zeros((1, ))], batch_size=1, epochs=150,
-                      callbacks=[tensorboard, value_monitor],
-                      validation_data=(x,[np.expand_dims(val_trans, -1), np.expand_dims(val_rot, -1), np.zeros(1,)]))
+# hist = test_model.fit(x, [np.zeros((1, )), np.zeros((1, )), np.zeros((1, ))], batch_size=30, epochs=150,
+#                       callbacks=[tensorboard, value_monitor],
+#                       validation_data=(x,[np.expand_dims(val_trans, -1), np.expand_dims(val_rot, -1), np.zeros(1,)]))
                       # validation_split=1.)
 
 from mpl_toolkits.mplot3d import Axes3D
@@ -512,3 +515,15 @@ def make_quiver_plot(trans, rot, target_trans, target_rot, plot_arrows=True):
               t_z[0], t_z[1], t_z[2], colors=[1, 0, 1, 1])
 
 make_quiver_plot(trans_steps, rot_steps, t_trans, t_rot, False)
+outputs = [test_model.get_layer("mrcnn_pose_loss/y_pred_t").output,
+           test_model.get_layer("mrcnn_pose_loss/y_pred_r").output]
+target_outputs = [test_model.get_layer("mrcnn_pose_loss/y_true_t").output,
+                  test_model.get_layer("mrcnn_pose_loss/y_true_r").output]
+pred_func = k.backend.function(inputs=test_model.inputs, outputs=outputs)
+target_func = k.backend.function(inputs=test_model.inputs, outputs=target_outputs)
+predictions = pred_func(x)
+u, s, vh = np.linalg.svd(predictions[1])
+r = np.matmul(u, vh)
+concat_poses2 = np.concatenate([r,
+                               np.transpose(predictions[0], [0, 2, 1])], axis=2)
+visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)

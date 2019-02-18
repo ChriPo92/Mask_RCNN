@@ -655,7 +655,13 @@ if __name__ == '__main__':
         if args.debug == "cli":
             sess = tf_debug.LocalCLIDebugWrapperSession(sess)
         elif args.debug == "dump":
-            sess = tf_debug.DumpingDebugWrapperSession(sess, "~/Code/Python/Mask_RCNN/logs/debug_dumps/")
+            def my_watch_fn(fetches, feeds):
+                del fetches, feeds  # Not used. But you could use them to dump runs of specific fetches/feeds.
+                watch_opt = tf_debug.WatchOptions(debug_ops="DebugIdentity",
+                                                  node_name_regex_whitelist=r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)")
+                return watch_opt
+            sess = tf_debug.DumpingDebugWrapperSession(sess, "~/Code/Python/Mask_RCNN/logs/debug_dumps/offline/",
+                                                       watch_fn=my_watch_fn)
         else:
             sess = tf_debug.TensorBoardDebugWrapperSession(sess, "localhost:7000", send_traceback_and_source_code=False)
         KB.set_session(sess)
