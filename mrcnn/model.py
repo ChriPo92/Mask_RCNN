@@ -1400,13 +1400,13 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn,
     x = KL.Activation('relu')(x)
     # transform to [batch, num_rois, 128]
     x = KL.TimeDistributed(KL.Dense(128),
-                           name=f"mrcnn_pointnet_{name}_fc1")(x)
+                           name=f"mrcnn_pointnet_{name}_fc2")(x)
     x = KL.TimeDistributed(BatchNorm(),
                            name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # [batch, num_rois, 3 * NUM_CLASSES]
     x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
-                               name=f"mrcnn_pointnet_{name}_fc2")(x)
+                               name=f"mrcnn_pointnet_{name}_fc3")(x)
     return x
 
 class CalcRotMatrix(KL.Layer):
@@ -2838,11 +2838,11 @@ class MaskRCNN():
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        # optimizer = keras.optimizers.SGD(
-        #     lr=learning_rate, momentum=momentum,
-        #     clipnorm=self.config.GRADIENT_CLIP_NORM)
-        optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
-                                          beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
+        optimizer = keras.optimizers.SGD(
+            lr=learning_rate, momentum=momentum,
+            clipnorm=self.config.GRADIENT_CLIP_NORM)
+        # optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
+        #                                   beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
