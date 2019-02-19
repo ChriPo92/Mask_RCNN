@@ -451,8 +451,8 @@ class PyramidROIAlign(KE.Layer):
         # the fact that our coordinates are normalized here.
         # e.g. a 224x224 ROI (in pixels) maps to P4
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-        # TODO: FIX NANs appearing in this tensor, How is it possible that h*w == 0?
-        area = tf.multiply(h, w, name="roi_area")
+        # TODO: FIX NANs appearing in this tensor, How is it possible that h*w == 0; apparently this happens in gradient?
+        area = tf.multiply(h, w, name="roi_area") + 1e-8
         with tf.control_dependencies([tf.assert_positive(area)]):
             roi_level = log2_graph(tf.sqrt(area, name="sqrt_area") / (224.0 / tf.sqrt(image_area,
                                                                     name="sqrt_image_area")))
@@ -1395,6 +1395,15 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn,
     # transform to [batch, num_rois, 256]
     x = KL.TimeDistributed(KL.Dense(256),
                                name=f"mrcnn_pointnet_{name}_fc1")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, 128]
+    x = KL.TimeDistributed(KL.Dense(128),
+                           name=f"mrcnn_pointnet_{name}_fc1")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
     # [batch, num_rois, 3 * NUM_CLASSES]
     x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
                                name=f"mrcnn_pointnet_{name}_fc2")(x)
