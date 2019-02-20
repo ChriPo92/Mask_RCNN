@@ -39,7 +39,7 @@ import keras as k
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_pointnet_1.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
 DEBUG = False
 if DEBUG:
     import keras.backend as KB
@@ -115,7 +115,7 @@ model = modellib.MaskRCNN(mode=TEST_MODE, model_dir=MODEL_DIR,
                           config=config)
 
 # Load weights
-model.load_weights(MODEL_PATH, by_name=True, exclude=["mrcnn_pose_rot_deconv", "mrcnn_pose_trans_deconv"])
+model.load_weights(MODEL_PATH, by_name=True, exclude=["mrcnn_pointnet_rot_fc3"])
 
 # ## Run Detection
 
@@ -189,7 +189,7 @@ if TEST_MODE is "training":
         ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").output),
         ("trans_reshape", model.keras_model.get_layer("trans_reshape").output),
         ("rot_reshape", model.keras_model.get_layer("rot_reshape").output),
-        # ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").output),
+        ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").output),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").output),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").output),
@@ -206,8 +206,8 @@ if TEST_MODE is "training":
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
         # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
-        # ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").output),
-        # ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
+        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/trans_error").output),
+        ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
         ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
         ########### from function - chamfer_distance_loss_keras ###########
         # ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
@@ -258,7 +258,7 @@ if TEST_MODE is "training":
         ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").weights),
         ("trans_reshape", model.keras_model.get_layer("trans_reshape").weights),
         ("rot_reshape", model.keras_model.get_layer("rot_reshape").weights),
-        # ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").weights),
+        ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").weights),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").weights),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").weights),
@@ -452,19 +452,37 @@ visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class
 
 
 ##### Check correctness of CalcRotMatrix
-# r_m = np.transpose(activations["rot_reshape"], [0, 1, 4, 3, 2])
-# x_1 = r_m[:, :, :, 0, :]
-# x_2 = r_m[:, :, :, 1, :]
-# x_1 /= np.expand_dims(np.sqrt(np.sum(np.square(x_1), axis=3)), axis=-1)
-# x_2 /= np.expand_dims(np.sqrt(np.sum(np.square(x_2), axis=3)), axis=-1)
-# x_3 = np.cross(x_1, x_2)
-# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_1), axis=3)),
-#                            np.ones((1, 100, 22)), rtol=1e-5)
-# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_2), axis=3)),
-#                            np.ones((1, 100, 22)), rtol=1e-5)
-# # TODO: think about the correctness of this approach
-# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_3), axis=3)),
-#                            np.ones((1, 100, 22)), rtol=1e-5)
+r_m = np.transpose(activations["rot_reshape"], [0, 1, 4, 3, 2])
+x_1 = r_m[:, :, :, 0, :]
+x_2 = r_m[:, :, :, 1, :]
+x_1 /= np.expand_dims(np.sqrt(np.sum(np.square(x_1), axis=3)), axis=-1)
+x_2 /= np.expand_dims(np.sqrt(np.sum(np.square(x_2), axis=3)), axis=-1)
+x_3 = np.cross(x_1, x_2)
+np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_1), axis=3)),
+                           np.ones((1, 100, 22)), rtol=1e-5)
+np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_2), axis=3)),
+                           np.ones((1, 100, 22)), rtol=1e-5)
+exceptions = []
+# TODO:
+# This fails for certain classes (but then for each roi) with slightly different rotations
+# Not sure if this is due to numerical issues because the differences are usually
+# of the scale 1e-3
+for i in range(100):
+    for j in range(22):
+        a = x_1[0, i, j]
+        b = x_2[0, i, j]
+        v = x_3[0, i, j]
+        c = np.dot(a, b)
+        v_cross = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]], dtype=np.float32)
+        I = np.eye(3, dtype=np.float32)
+        factor = 1 / (1 + c)
+        rot = I + v_cross + np.dot(v_cross, v_cross) * factor
+        rot_network = activations["calcrotmatrix"][0, i, :, :, j]
+        try:
+            np.testing.assert_allclose(rot.astype(np.float32), rot_network, atol=1e-5)
+        except AssertionError:
+            exceptions.append((i, j))
+
 
 
 

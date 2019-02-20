@@ -1410,10 +1410,15 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn,
     return x
 
 class CalcRotMatrix(KL.Layer):
+    def __init__(self, config, **kwargs):
+        super(CalcRotMatrix, self).__init__(**kwargs)
+        self.batch_shape = [config.BATCH_SIZE,
+                            config.TRAIN_ROIS_PER_IMAGE,
+                            config.NUM_CLASSES]
     def call(self, inputs, **kwargs):
         """
         Transformes a Matrix with 2 out of 3 column vectors of a rotation matrix available
-        TODO: This is not correct for now; look at:
+        From:
         https://math.stackexchange.com/questions/180418/calculate-rotation-matrix-to-align-vector-a-to-vector-b-in-3d/476311#476311
         :param inputs: [batch, num_rois, 3, 2, num_classes]
         :param kwargs:
@@ -1422,20 +1427,43 @@ class CalcRotMatrix(KL.Layer):
         # transpose to [batch, num_rois, num_classes, 2, 3]
         inputs = tf.transpose(inputs, [0, 1, 4, 3, 2], "transpose_inputs")
         # split the column vectors; [batch, num_rois, num_classes, 3]
-        x_1, x_2 = tf.split(inputs, 2, axis=3, name="split_inputs")
-        x_1 = tf.squeeze(x_1, axis=3, name="squeeze_x_1")
-        x_2 = tf.squeeze(x_2, axis=3, name="squeeze_x_2")
+        a, b = tf.split(inputs, 2, axis=3, name="split_inputs")
+        a = tf.squeeze(a, axis=3, name="squeeze_a")
+        b = tf.squeeze(b, axis=3, name="squeeze_b")
         # calculate the norm of the vectors
-        x_1_norm = tf.sqrt(tf.reduce_sum(tf.square(x_1), axis=3, keepdims=True) + 1e-8, name="x_1_norm")
-        x_2_norm = tf.sqrt(tf.reduce_sum(tf.square(x_2), axis=3, keepdims=True) + 1e-8, name="x_2_norm")
+        a_norm = tf.sqrt(tf.reduce_sum(tf.square(a), axis=3, keepdims=True) + 1e-8, name="a_norm")
+        b_norm = tf.sqrt(tf.reduce_sum(tf.square(b), axis=3, keepdims=True) + 1e-8, name="b_norm")
         # transfrom them into unit vectors
-        x_1 = x_1 / x_1_norm
-        x_2 = x_2 / x_2_norm
-        # calculate x_3 orthogonal to x_1 and x_2; [batch, num_rois, num_classes, 3]
-        x_3 = tf.linalg.cross(x_1, x_2)
+        a = a / a_norm
+        b = b / b_norm
+        # [batch, num_rois, num_classes, 1]
+        # dot product of the last dimensions (3-vectors); cosine of angle
+        c = tf.squeeze(
+            tf.matmul(
+                tf.expand_dims(a, -1), tf.expand_dims(b, -1),
+                transpose_a=True),
+            axis=-1)
+        v = tf.linalg.cross(a, b)
+        v_1 = v[:, :, :, 0]
+        v_2 = v[:, :, :, 1]
+        v_3 = v[:, :, :, 2]
+        zero_element = tf.zeros_like(v_1)
+        # skew-symmetric cross-product matrix of v; [batch, num_rois, num_classes, 9]
+        skew_symmetric_v = tf.stack([zero_element, -v_3, v_2, v_3, zero_element,
+                                     -v_1, -v_2, v_1, zero_element], axis=-1)
+        # reshape to [batch, num_rois, num_classes, 3, 3]
+        skew_symmetric_v = tf.reshape(skew_symmetric_v, self.batch_shape + [3, 3])
+        identity_matrix = tf.eye(3, batch_shape=self.batch_shape)
+        # the factor is 0 iff cos(a, b) = -1, i.e. when they point in opposite directions
+        # [batch, num_rois, num_classes, 1]
+        factor = tf.div(tf.ones_like(c), 1 + c)
+        # broadcast to [batch, num_rois, num_classes, 3, 3] for multiplication
+        factor = tf.broadcast_to(tf.expand_dims(factor, -1), skew_symmetric_v.shape)
+        rot = identity_matrix + skew_symmetric_v + tf.multiply(tf.matmul(skew_symmetric_v, skew_symmetric_v), factor)
+
         # [batch, num_rois, num_classes, 3, 3] --> [batch, num_rois, 3, 3, num_classes]
         # TODO: check if this is correct
-        rot = tf.transpose(tf.stack([x_1, x_2, x_3], axis=4), [0, 1, 3, 4, 2])
+        rot = tf.transpose(rot, [0, 1, 3, 4, 2])
         return rot
 
     def compute_output_shape(self, input_shape):
@@ -1486,14 +1514,14 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
     rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                     9 * config.NUM_CLASSES, last_activation="sigmoid",
+                                     6 * config.NUM_CLASSES, last_activation="sigmoid",
                                      vector_size=config.POINTNET_VECTOR_SIZE)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
-                     3, 3, config.NUM_CLASSES), name="rot_reshape")(rot)
+                     3, 2, config.NUM_CLASSES), name="rot_reshape")(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
-    # rot = CalcRotMatrix(name="CalcRotMatrix")(rot)
+    rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
 
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])
