@@ -115,7 +115,7 @@ model = modellib.MaskRCNN(mode=TEST_MODE, model_dir=MODEL_DIR,
                           config=config)
 
 # Load weights
-model.load_weights(MODEL_PATH, by_name=True, exclude=["mrcnn_pointnet_rot_fc3"])
+model.load_weights(MODEL_PATH, by_name=True)#, exclude=["mrcnn_pointnet_rot_fc3"])
 
 # ## Run Detection
 

@@ -256,9 +256,9 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     chamfer_loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
     # rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
     #                         name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
-    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.msle(y[0], y[1])),
+    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.binary_crossentropy(y[0], y[1])),
                             name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
-    trans_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.msle(y[0], y[1])),
+    trans_loss = KL.Lambda(lambda y: tf.sqrt(tf.reduce_mean(tf.keras.losses.mse(y[0], y[1])) + 1e-8),
                          name="mrcnn_pose_loss/trans_error")([y_true_t, y_pred_t])
     huber_trans_loss = KL.Lambda(lambda y: tf.reduce_mean(huber_loss(tf.norm(y[0]-y[1], axis=-1), 2.0)),
                                 name="mrcnn_pose_loss/huber_trans")([y_true_t, y_pred_t])
@@ -272,7 +272,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # loss = K.mean(loss)
     # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
     total_loss = KL.Lambda(lambda y: y[0] + y[1],
-                           name="mrcnn_pose_loss/total_loss")([trans_loss, rot_loss])
+                           name="mrcnn_pose_loss/total_loss")([huber_trans_loss, rot_loss])
     return total_loss
 
 

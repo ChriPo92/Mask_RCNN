@@ -1456,7 +1456,7 @@ class CalcRotMatrix(KL.Layer):
         identity_matrix = tf.eye(3, batch_shape=self.batch_shape)
         # the factor is 0 iff cos(a, b) = -1, i.e. when they point in opposite directions
         # [batch, num_rois, num_classes, 1]
-        factor = tf.div(tf.ones_like(c), 1 + c)
+        factor = tf.div_no_nan(tf.ones_like(c), 1 + c)
         # broadcast to [batch, num_rois, num_classes, 3, 3] for multiplication
         factor = tf.broadcast_to(tf.expand_dims(factor, -1), skew_symmetric_v.shape)
         rot = identity_matrix + skew_symmetric_v + tf.multiply(tf.matmul(skew_symmetric_v, skew_symmetric_v), factor)
