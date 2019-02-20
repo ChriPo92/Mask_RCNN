@@ -303,7 +303,7 @@ class YCBVConfig(Config):
     USE_DEPTH_AWARE_OPS = False
 
     LEARNING_RATE = 0.001
-    GRADIENT_CLIP_NORM = 1.0
+    GRADIENT_CLIP_NORM = 5.0
     ESTIMATE_6D_POSE = True
     POSE_ESTIMATION_METHOD = "pointnet"
     XYZ_MODEL_PATH = os.path.join(os.path.expanduser("~"), "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl")
@@ -313,7 +313,7 @@ class YCBVConfig(Config):
         "mrcnn_class_loss": 1.,
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
-        "mrcnn_pose_loss/trans_loss": 100.,
+        "mrcnn_pose_loss/trans_loss": 1000.,
         "mrcnn_pose_loss/rot_loss": 1.
     }
 
