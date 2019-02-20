@@ -313,7 +313,8 @@ class YCBVConfig(Config):
         "mrcnn_class_loss": 1.,
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
-        "mrcnn_pose_loss/total_loss": 10000.
+        "mrcnn_pose_loss/trans_loss": 100.,
+        "mrcnn_pose_loss/rot_loss": 1.
     }
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)

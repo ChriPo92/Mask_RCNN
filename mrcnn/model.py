@@ -2710,7 +2710,7 @@ class MaskRCNN():
                 # pose_loss = KL.Lambda(lambda x: mrcnn_pose_loss_graph_tf(*x), name="mrcnn_pose_loss")(
                 #     [target_pose, target_class_ids, mrcnn_pose_trans, mrcnn_pose_rot, xyz]
                 # )
-                pose_loss = mrcnn_pose_loss_graph_keras(target_pose, target_class_ids,
+                trans_loss, rot_loss = mrcnn_pose_loss_graph_keras(target_pose, target_class_ids,
                                                         mrcnn_pose_trans, mrcnn_pose_rot, xyz, config, df.shape[1])
 
             # Model
@@ -2722,7 +2722,7 @@ class MaskRCNN():
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
             if config.ESTIMATE_6D_POSE:
                 inputs.extend([input_intrinsic_matrices, input_gt_poses, xyz])
-                outputs.extend([mrcnn_pose_trans, mrcnn_pose_rot, pose_loss])
+                outputs.extend([mrcnn_pose_trans, mrcnn_pose_rot, trans_loss, rot_loss])
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
             if config.USE_DEPTH_AWARE_OPS:
@@ -2879,7 +2879,8 @@ class MaskRCNN():
             "rpn_class_loss", "rpn_bbox_loss",
             "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
         if self.config.ESTIMATE_6D_POSE:
-            loss_names.append("mrcnn_pose_loss/total_loss")
+            loss_names.append("mrcnn_pose_loss/trans_loss")
+            loss_names.append("mrcnn_pose_loss/rot_loss")
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:

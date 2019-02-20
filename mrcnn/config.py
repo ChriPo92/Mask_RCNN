@@ -192,7 +192,8 @@ class Config(object):
         "mrcnn_class_loss": 1.,
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
-        "mrcnn_pose_loss/total_loss": 10.
+        "mrcnn_pose_loss/trans_loss": 10.,
+        "mrcnn_pose_loss/rot_loss": 1.
     }
 
     # Use RPN ROIs or externally generated ROIs for training

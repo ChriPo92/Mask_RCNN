@@ -206,7 +206,7 @@ if TEST_MODE is "training":
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
         # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
-        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/trans_error").output),
+        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/huber_trans").output),
         ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
         ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
         ########### from function - chamfer_distance_loss_keras ###########
