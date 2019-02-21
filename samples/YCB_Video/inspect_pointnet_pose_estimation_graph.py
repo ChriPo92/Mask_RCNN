@@ -191,7 +191,7 @@ if TEST_MODE is "training":
         ("trans_fc3", model.keras_model.get_layer("mrcnn_pointnet_trans_fc3").output),
         ("trans_reshape", model.keras_model.get_layer("trans_reshape").output),
         ("rot_reshape", model.keras_model.get_layer("rot_reshape").output),
-        ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").output),
+        # ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").output),
         ########### from function - mrcnn_pose_loss_graph_keras ###########
         ("pose_target_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/target_class_ids").output),
         ("pose_target_poses", model.keras_model.get_layer("mrcnn_pose_loss/target_poses").output),

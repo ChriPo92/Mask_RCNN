@@ -2474,6 +2474,7 @@ class MaskRCNN():
         self.set_log_dir()
         self.run_metadata = None
         self.keras_model = self.build(mode=mode, config=config)
+        self.callbacks = None
 
     def build(self, mode, config):
         """Build Mask R-CNN architecture.
@@ -3074,7 +3075,7 @@ class MaskRCNN():
         # Add custom callbacks to the list
         if custom_callbacks:
             callbacks += custom_callbacks
-
+        self.callbacks = callbacks
         # Train
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
         log("Checkpoint Path: {}".format(self.checkpoint_path))

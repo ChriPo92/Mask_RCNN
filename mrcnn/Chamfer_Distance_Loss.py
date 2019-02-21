@@ -279,10 +279,13 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
     total_loss = KL.Lambda(lambda y: y[0] + y[1],
                            name="mrcnn_pose_loss/total_loss")([huber_trans_loss, rot_loss])
-    trans_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2], name="mrcnn_pose_loss/trans_loss")([trans_loss_x,
-                                                                                             trans_loss_y,
-                                                                                             trans_loss_z])
-    rot_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/rot_loss")(rot_loss)
+    # trans_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2], name="mrcnn_pose_loss/trans_loss")([trans_loss_x,
+    #                                                                                          trans_loss_y,
+    #                                                                                          trans_loss_z])
+    print_op = tf.print([trans_loss, rot_loss, y_true_t[0, 0], y_pred_t[0, 0]])
+    with tf.control_dependencies([print_op]):
+        trans_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/trans_loss")(trans_loss)
+        rot_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/rot_loss")(rot_loss)
     return trans_loss, rot_loss
 
 
