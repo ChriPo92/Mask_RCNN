@@ -230,13 +230,13 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
 
     # Gather the masks (predicted and true) that contribute to loss
     y_true_t = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
-                         name="mrcnn_pose_loss/y_true_t", output_shape=(3,))(
+                         name="mrcnn_pose_loss/y_true_t", output_shape=(1, 3))(
                          [target_trans, positive_ix])  # shape: [pos_ix, 1, 3]
     y_true_r = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
                          name="mrcnn_pose_loss/y_true_r", output_shape=(3, 3))(
                          [target_rot, positive_ix])  # shape: [pos_ix, 3, 3]
     y_pred_t = KL.Lambda(lambda y: tf.gather_nd(y[0], y[1]),
-                         name="mrcnn_pose_loss/y_pred_t", output_shape=(3,))(
+                         name="mrcnn_pose_loss/y_pred_t", output_shape=(1, 3))(
                          [pred_trans, indices])  # shape: [pos_ix, 1, 3]
     y_pred_r = KL.Lambda(lambda y: tf.gather_nd(y[0], y[1]),
                          name="mrcnn_pose_loss/y_pred_r", output_shape=(3, 3,))(
@@ -260,6 +260,12 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
                             name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
     trans_loss = KL.Lambda(lambda y: tf.sqrt(tf.reduce_mean(tf.keras.losses.mse(y[0], y[1])) + 1e-8),
                          name="mrcnn_pose_loss/trans_error")([y_true_t, y_pred_t])
+    trans_loss_x = KL.Lambda(lambda y: tf.reduce_mean(tf.sqrt(tf.keras.losses.mse(y[0][:, 0, 0], y[1][:, 0, 0]) + 1e-8)),
+                         name="mrcnn_pose_loss/trans_x_error")([y_true_t, y_pred_t])
+    trans_loss_y = KL.Lambda(lambda y: tf.reduce_mean(tf.sqrt(tf.keras.losses.mse(y[0][:, 0, 1], y[1][:, 0, 1]) + 1e-8)),
+                             name="mrcnn_pose_loss/trans_y_error")([y_true_t, y_pred_t])
+    trans_loss_z = KL.Lambda(lambda y: tf.reduce_mean(tf.sqrt(tf.keras.losses.mse(y[0][:, 0, 2], y[1][:, 0, 2]) + 1e-8)),
+                             name="mrcnn_pose_loss/trans_z_error")([y_true_t, y_pred_t])
     huber_trans_loss = KL.Lambda(lambda y: tf.reduce_mean(huber_loss(tf.norm(y[0]-y[1], axis=-1), 2.0)),
                                 name="mrcnn_pose_loss/huber_trans")([y_true_t, y_pred_t])
     # loss = KL.Lambda(lambda y: tf.cond(tf.greater(tf.size(y[2]), tf.constant(0)),
@@ -273,7 +279,9 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # It is not possible to add constants (shape ()) with a KL.Add; therefore use a lambda layer
     total_loss = KL.Lambda(lambda y: y[0] + y[1],
                            name="mrcnn_pose_loss/total_loss")([huber_trans_loss, rot_loss])
-    trans_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/trans_loss")(trans_loss)
+    trans_loss = KL.Lambda(lambda y: y[0] + y[1] + y[2], name="mrcnn_pose_loss/trans_loss")([trans_loss_x,
+                                                                                             trans_loss_y,
+                                                                                             trans_loss_z])
     rot_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/rot_loss")(rot_loss)
     return trans_loss, rot_loss
 
