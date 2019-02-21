@@ -185,8 +185,10 @@ if TEST_MODE is "training":
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").output),
         ("rot_fc1", model.keras_model.get_layer("mrcnn_pointnet_rot_fc1").output),
         ("rot_fc2", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").output),
+        ("rot_fc3", model.keras_model.get_layer("mrcnn_pointnet_rot_fc3").output),
         ("trans_fc1", model.keras_model.get_layer("mrcnn_pointnet_trans_fc1").output),
         ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").output),
+        ("trans_fc3", model.keras_model.get_layer("mrcnn_pointnet_trans_fc3").output),
         ("trans_reshape", model.keras_model.get_layer("trans_reshape").output),
         ("rot_reshape", model.keras_model.get_layer("rot_reshape").output),
         ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").output),
@@ -206,9 +208,9 @@ if TEST_MODE is "training":
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
         # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
-        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/huber_trans").output),
-        ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").output),
-        ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
+        ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/trans_loss").output),
+        ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_loss").output),
+        # ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").output),
         ########### from function - chamfer_distance_loss_keras ###########
         # ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").output),
         # ("added_pred_models", model.keras_model.get_layer("added_pred_models").output),
@@ -254,8 +256,10 @@ if TEST_MODE is "training":
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").weights),
         ("rot_fc1", model.keras_model.get_layer("mrcnn_pointnet_rot_fc1").weights),
         ("rot_fc2", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").weights),
+        ("rot_fc3", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").weights),
         ("trans_fc1", model.keras_model.get_layer("mrcnn_pointnet_trans_fc1").weights),
         ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").weights),
+        ("trans_fc3", model.keras_model.get_layer("mrcnn_pointnet_trans_fc3").weights),
         ("trans_reshape", model.keras_model.get_layer("trans_reshape").weights),
         ("rot_reshape", model.keras_model.get_layer("rot_reshape").weights),
         ("calcrotmatrix", model.keras_model.get_layer("CalcRotMatrix").weights),
@@ -277,7 +281,7 @@ if TEST_MODE is "training":
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").weights),
         # ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").weights),
         # ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").weights),
-        ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").weights),
+        # ("total_loss", model.keras_model.get_layer("mrcnn_pose_loss/total_loss").weights),
         ########### from function - chamfer_distance_loss_keras ###########
         # ("transposed_pred_models", model.keras_model.get_layer("transposed_pred_models").weights),
         # ("added_pred_models", model.keras_model.get_layer("added_pred_models").weights),
@@ -300,7 +304,7 @@ if TEST_MODE is "training":
 
     ], return_gradients=False)
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
-
+k.losses.mse
 det_count = np.where(det_class_ids == 0)[0][0]
 det_class_ids = det_class_ids[:det_count]
 detections = activations['rois'][0, :det_count]

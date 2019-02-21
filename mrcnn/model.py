@@ -1404,7 +1404,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn,
     x = KL.TimeDistributed(BatchNorm(),
                            name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # [batch, num_rois, 3 * NUM_CLASSES]
+    # [batch, num_rois, out_number]
     x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
                                name=f"mrcnn_pointnet_{name}_fc3")(x)
     return x
@@ -1514,14 +1514,14 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
     rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                     6 * config.NUM_CLASSES, last_activation="sigmoid",
+                                     9 * config.NUM_CLASSES, last_activation="sigmoid",
                                      vector_size=config.POINTNET_VECTOR_SIZE)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
-                     3, 2, config.NUM_CLASSES), name="rot_reshape")(rot)
+                     3, 3, config.NUM_CLASSES), name="rot_reshape")(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
-    rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
+    # rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
 
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])
@@ -2866,11 +2866,11 @@ class MaskRCNN():
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.SGD(
-            lr=learning_rate, momentum=momentum,
-            clipnorm=self.config.GRADIENT_CLIP_NORM)
-        # optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
-        #                                   beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
+        # optimizer = keras.optimizers.SGD(
+        #     lr=learning_rate, momentum=momentum,
+        #     clipnorm=self.config.GRADIENT_CLIP_NORM)
+        optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
+                                          beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
