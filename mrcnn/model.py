@@ -2361,7 +2361,7 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
                      config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
                 batch_gt_poses = np.zeros(
                     (batch_size, gt_pose.shape[0], gt_pose.shape[1],
-                     config.MAX_GT_INSTANCES), dtype=gt_masks.dtype)
+                     config.MAX_GT_INSTANCES), dtype=gt_pose.dtype)
                 batch_intrinsic_matrices = np.zeros((batch_size, 3, 3),
                                                     dtype=intrinsic_matrix.dtype)
                 if random_rois:
@@ -2559,6 +2559,7 @@ class MaskRCNN():
         # Top-down Layers
         # TODO: add assert to varify feature map sizes match what's in config
         # All layers are cast to TOP_DOWN_PYRAMID_SIZE channels
+
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
             KL.UpSampling2D(size=(2, 2), name="fpn_p5upsampled")(P5),
@@ -2711,6 +2712,7 @@ class MaskRCNN():
                 # pose_loss = KL.Lambda(lambda x: mrcnn_pose_loss_graph_tf(*x), name="mrcnn_pose_loss")(
                 #     [target_pose, target_class_ids, mrcnn_pose_trans, mrcnn_pose_rot, xyz]
                 # )
+
                 trans_loss, rot_loss = mrcnn_pose_loss_graph_keras(target_pose, target_class_ids,
                                                         mrcnn_pose_trans, mrcnn_pose_rot, xyz, config, df.shape[1])
 
@@ -2867,11 +2869,11 @@ class MaskRCNN():
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        # optimizer = keras.optimizers.SGD(
-        #     lr=learning_rate, momentum=momentum,
-        #     clipnorm=self.config.GRADIENT_CLIP_NORM)
-        optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
-                                          beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
+        optimizer = keras.optimizers.SGD(
+            lr=learning_rate, momentum=momentum,
+            clipnorm=self.config.GRADIENT_CLIP_NORM)
+        # optimizer = keras.optimizers.Adam(lr=self.config.LEARNING_RATE, beta_1=0.9,
+        #                                   beta_2=0.999, epsilon=None, decay=0., amsgrad=False)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []

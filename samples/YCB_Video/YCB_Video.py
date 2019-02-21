@@ -299,7 +299,7 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 203
-    # TRAIN_ROIS_PER_IMAGE = 70
+    # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = False
 
     LEARNING_RATE = 0.001
@@ -314,7 +314,7 @@ class YCBVConfig(Config):
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
         "mrcnn_pose_loss/trans_loss": 1000.,
-        "mrcnn_pose_loss/rot_loss": 1.
+        "mrcnn_pose_loss/rot_loss": 100.
     }
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
