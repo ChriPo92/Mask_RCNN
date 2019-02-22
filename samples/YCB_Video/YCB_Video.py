@@ -30,7 +30,6 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
 import os
 import sys
 import time
-import math
 import numpy as np
 import cv2
 import pandas as pd
@@ -43,9 +42,6 @@ import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from tensorflow.python.client import timeline
-
-from tqdm import tqdm
 
 DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
@@ -56,7 +52,8 @@ ROOT_DIR = os.path.abspath("../../")
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
-from mrcnn import model as modellib, utils, visualize
+from mrcnn import model as modellib, visualize
+from utils import utils
 
 # Path to trained weights file
 COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
@@ -330,7 +327,6 @@ class YCBVConfig(Config):
 #                                               Image Augmentation                                                     #
 ########################################################################################################################
 
-import imgaug as ia
 from imgaug import augmenters as iaa
 
 # random example images

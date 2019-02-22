@@ -1,5 +1,4 @@
 import numpy as np
-import cv2
 import sys
 import os
 
@@ -7,7 +6,7 @@ ROOT_DIR = os.path.abspath("../../")
 
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)
-from mrcnn import utils
+from utils import utils
 from mrcnn.config import Config
 
 ########################################################################################################################

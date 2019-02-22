@@ -1,3 +1,15 @@
+# Ignore all
+*
+
+# Unignore all with extensions
+!*.*
+!Pipfile
+
+# Unignore all dirs
+!*/
+
+### Above combination will ignore all files without extension ###
+
 # Data files and directories common in repo root
 datasets/
 logs/
@@ -32,6 +44,7 @@ wheels/
 *.egg
 *.zip
 *.pkl
+!samples/YCB_Video/XYZ_Models.pkl
 
 # Installer logs
 pip-log.txt
@@ -70,3 +83,10 @@ ENV/
 # compiled objects
 *.o
 *.so
+
+# other
+*.png
+*.csv
+*.json
+*.log
+*.in

@@ -11,26 +11,21 @@
 import os
 import sys
 import random
-import math
-import re
-import time
 import numpy as np
 import tensorflow as tf
 import pickle as pkl
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../../")
 
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
-from mrcnn import utils
+from utils import utils
 from mrcnn import visualize
-from mrcnn.visualize import display_images
-from samples.YCB_Video.Test_Pose_Estimation import calculate_2d_hull_of_pointcloud, load_YCB_meta_infos
+from samples.YCB_Video.Test_Pose_Estimation import load_YCB_meta_infos
 import mrcnn.model as modellib
-from mrcnn.model import log, build_fpn_pointnet_pose_graph
+from mrcnn.model import build_fpn_pointnet_pose_graph
 from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_keras
 import open3d as o3d
 import keras as k
@@ -584,7 +579,6 @@ value_monitor = monitor_translation_during_training(x)
 #                       validation_data=(x,[np.expand_dims(val_trans, -1), np.expand_dims(val_rot, -1), np.zeros(1,)]))
                       # validation_split=1.)
 
-from mpl_toolkits.mplot3d import Axes3D
 trans_steps = []
 rot_steps = []
 obj_id = 1

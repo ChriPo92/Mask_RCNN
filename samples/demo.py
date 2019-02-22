@@ -5,12 +5,9 @@ import numpy as np
 import scipy.io as io
 import subprocess as sp
 import open3d as o3d
-from pyquaternion import Quaternion
-from mpl_toolkits.mplot3d import Axes3D
 from samples.YCB_Video.YCB_Video import YCBVConfig, YCBVDataset
-from samples.YCB_Video.open3d_test import draw_registration_result, preprocess_point_cloud,\
-    execute_global_registration, refine_registration, execute_fast_global_registration
-import matplotlib
+from samples.YCB_Video.open3d_test import preprocess_point_cloud,\
+    execute_global_registration, refine_registration
 import matplotlib.pyplot as plt
 import cv2
 from scipy.spatial import ConvexHull
@@ -23,7 +20,6 @@ print(ROOT_DIR)
 
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
-from mrcnn import utils
 from samples.LINEMOD.LINEMOD import linemod_point_cloud
 import mrcnn.model as modellib
 from mrcnn import visualize
@@ -32,7 +28,6 @@ from mrcnn import visualize
 
 # Import COCO config
 sys.path.append(os.path.join(ROOT_DIR, "samples/coco/"))  # To find local version
-from samples.coco import coco
 
 # from keras.backend.tensorflow_backend import set_session
 # import tensorflow as tf

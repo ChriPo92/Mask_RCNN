@@ -28,8 +28,8 @@ import depth_aware_operations.da_avg_pooling as da_avg_pool
 DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
 
-from mrcnn import utils
-from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_tf, mrcnn_pose_loss_graph_keras
+from utils import utils
+from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_keras
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
@@ -1316,7 +1316,7 @@ class FeaturePointCloud(KE.Layer):
         # [batch, num_rois, h*w, 1]
         # filter out all elements which have z == 0 for the minimum value
         min_z = tf.reshape(utils.batch_slice([z_im], min_nonzero,
-                                  self.config.IMAGES_PER_GPU,
+                                             self.config.IMAGES_PER_GPU,
                                              names=["min_nonzero_z"]),
                            (batch, 1, 1, 1))
         # rescales z to be between 0...1 for each batch, excluding the depth points == 0
