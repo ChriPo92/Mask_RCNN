@@ -25,7 +25,7 @@ from utils import utils
 from mrcnn import visualize
 from samples.YCB_Video.Test_Pose_Estimation import load_YCB_meta_infos
 import mrcnn.model as modellib
-from mrcnn.model import build_fpn_pointnet_pose_graph
+from mrcnn.pointnet_pose_estimation import build_fpn_pointnet_pose_graph
 from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_keras
 import open3d as o3d
 import keras as k

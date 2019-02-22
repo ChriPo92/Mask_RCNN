@@ -833,13 +833,13 @@ if __name__ == '__main__':
         dataset_train.load_ycbv(args.dataset, "train", use_rgbd=args.depth_aware)
         dataset_train.prepare()
         fig, ax = plt.subplots(5, 2)
-        for j in range(5):
-            for i in range(2):
+        # for j in range(5):
+        #     for i in range(2):
                 # ax[0].cla()
                 # ax[1].cla()
                 # fig, ax = plt.subplots(1, 2)
                 # plt.close("all")
-                visualize.display_instances(image, bbox, mask, class_ids, dataset_train.class_names, ax=ax[j, i])
+                # visualize.display_instances(image, bbox, mask, class_ids, dataset_train.class_names, ax=ax[j, i])
                 # ax[1].imshow(image[:, :, 3])
         plt.show()
 
