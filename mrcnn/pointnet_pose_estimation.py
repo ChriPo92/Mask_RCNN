@@ -2,7 +2,8 @@ import keras.layers as KL
 import keras.engine as KE
 import tensorflow as tf
 
-from utils import utils
+from utils import utils, keras_util
+from utils.pointnet_util import pointnet_sa_module_msg, pointnet_sa_module, pointnet_fp_module
 
 class FeaturePointCloud(KE.Layer):
 
@@ -250,7 +251,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
 
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
-    x, d = PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
+    x, d = keras_util.PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
                            name="roi_align_pointnet_pose")([rois, image_meta] + feature_maps)
     # pcl_list = [batch, num_rois, h*w(576), (xq, y, z)], feature_list = [batch, num_rois, h*w, channels]
     # TODO: add masking from the previous branch; i.e. use predicted object masks here
@@ -292,3 +293,113 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     # with tf.control_dependencies([print_op]):
     #     rot = KL.Lambda(lambda y: tf.identity(y), name="pose_identity_op")(rot)
     return trans, rot
+
+########################################################################################################################
+#                                   POINTNET++                                                                         #
+########################################################################################################################
+
+class MultiScaleGroupingSetAbstractionLayer(KL.Layer):
+    def __init__(self, npoint, radius_list, nsample_list,
+                 mlp_list, is_training, bn_decay, bn=True,
+                 use_xyz=True, use_nchw=False, **kwargs):
+        super(MultiScaleGroupingSetAbstractionLayer, self).__init__(**kwargs)
+        self.npoint = npoint
+        self.radius_list = radius_list
+        self.nsample_list = nsample_list
+        self.mlp_list = mlp_list
+        self.is_training = is_training
+        self.bn_decay = bn_decay
+        self.bn = bn
+        self.use_xyz = use_xyz
+        self.use_nchw = use_nchw
+
+    def call(self, inputs, **kwargs):
+        """
+        Set Abstraction with Multi-Scale Grouping
+        :param inputs: [xyz, points]
+            xyz: [batch, num_points, 3]
+            points: [batch, num_points, channels]
+        :param kwargs:
+        :return: [new_xyz, new_points]
+            new_xyz: [batch, npoint, 3]
+            new_points: [batch, npoint, \sum_k{mlp[k][-1]}]
+        """
+        xyz = inputs[0]
+        points = inputs[1]
+        l_xyz, l_points = pointnet_sa_module_msg(xyz, points, npoint=self.npoint,
+                               radius_list=self.radius_list, nsample_list=self.nsample_list,
+                               mlp_list=self.mlp_list, is_training=self.is_training,
+                               bn_decay=self.bn_decay, bn=self.bn, use_xyz=self.use_xyz,
+                               use_nchw=self.use_nchw, scope=self.name)
+        return [l_xyz, l_points]
+
+    def compute_output_shape(self, input_shape):
+        xyz_shape = input_shape[0]
+        points_shape = input_shape[1]
+        batch = xyz_shape[0]
+        channels = 0
+        for l in self.mlp_list:
+            channels += l[-1]
+        return [(batch, self.npoint, 3), (batch, self.npoint, channels)]
+
+class SetAbstractionLayer(KL.Layer):
+    def __init__(self, npoint, radius, nsample, mlp, mlp2,
+                 group_all, is_training, bn_decay, bn=True,
+                 pooling='max', knn=False, use_xyz=True,
+                 use_nchw=False, **kwargs):
+        super(SetAbstractionLayer, self).__init__(**kwargs)
+        self.npoint = npoint
+        self.radius = radius
+        self.nsample = nsample
+        self.mlp = mlp
+        self.mlp2 = mlp2
+        self.group_all = group_all
+        self.is_training = is_training
+        self.bn_decay = bn_decay
+        self.bn = bn
+        self.pooling = pooling
+        self.knn = knn
+        self.use_xyz = use_xyz
+        self.use_nchw = use_nchw
+
+    def call(self, inputs, **kwargs):
+        xyz = inputs[0]
+        points = inputs[1]
+        l_xyz, l_points = pointnet_sa_module(xyz, points, npoint=self.npoint,
+                                             radius=self.radius, nsample=self.nsample,
+                                             mlp=self.mlp, mlp2=self.mlp2,
+                                             group_all=self.group_all,
+                                             is_training=self.is_training,
+                                             bn_decay=self.bn_decay, scope=self.name,
+                                             bn=self.bn, pooling=self.pooling,
+                                             knn=self.knn, use_xyz=self.use_xyz,
+                                             use_nchw=self.use_nchw)
+        return [l_xyz, l_points]
+
+    def compute_output_shape(self, input_shape):
+        batch = input_shape[0][0]
+        channels = self.mlp2[-1] if self.mlp2 is not None else self.mlp[-1]
+        return [(batch, self.npoint, 3), (batch, self.npoint, channels)]
+
+class FeaturePropagationLayer(KL.Layer):
+    def __init__(self, mlp, is_training, bn_decay, bn=True, **kwargs):
+        super(FeaturePropagationLayer, self).__init__(**kwargs)
+        self.mlp = mlp
+        self.is_training = is_training
+        self.bn_decay = bn_decay
+        self.bn = bn
+
+    def call(self, inputs, **kwargs):
+        xyz1 = inputs[0]
+        xyz2 = inputs[1]
+        points1 = inputs[2]
+        points2 = inputs[3]
+
+        new_points = pointnet_fp_module(xyz1, xyz2, points1, points2,
+                                        mlp=self.mlp, is_training=self.is_training,
+                                        bn_decay=self.bn_decay, scope=self.name, bn=self.bn)
+        return new_points
+
+    def compute_output_shape(self, input_shape):
+        xyz1_shape = input_shape[0]
+        return (xyz1_shape[0], xyz1_shape[1], self.mlp[-1])
