@@ -1,5 +1,5 @@
 from samples.YCB_Video.YCB_Video import YCBVDataset, YCBVConfig
-from mrcnn.model import load_image_gt
+from mrcnn.data_generation import load_image_gt
 from scipy.spatial import ConvexHull
 import scipy.io as io
 # from samples.demo import calculate_2d_hull_of_pointcloud, load_YCB_meta_infos

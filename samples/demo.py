@@ -1,6 +1,7 @@
 import os
 import os.path as osp
 import sys
+import random
 import numpy as np
 import scipy.io as io
 import subprocess as sp
@@ -22,9 +23,11 @@ print(ROOT_DIR)
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from samples.LINEMOD.LINEMOD import linemod_point_cloud
 import mrcnn.model as modellib
+from mrcnn.data_generation import load_image_gt
 from mrcnn import visualize
 
-
+DATA_ROOT_PATH = os.path.expanduser("~")
+# DATA_ROOT_PATH = /media/pohl
 
 # Import COCO config
 sys.path.append(os.path.join(ROOT_DIR, "samples/coco/"))  # To find local version
@@ -47,7 +50,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd_custom_da_resnet_graph.h5")
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "logs/ycbv20181212T1038/mask_rcnn_ycbv_0180.h5")
 # COCO_MODEL_PATH = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/logs/ycbv20181212T1038/mask_rcnn_ycbv_0180.h5"
-COCO_MODEL_PATH = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/logs/ycbv20181116T1732/mask_rcnn_ycbv_0180.h5"
+COCO_MODEL_PATH = os.path.join(os.path.expanduser("~"), "Code/Python/Mask_RCNN/weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
 #COCO_MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_rgbd.h5")
 # COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
@@ -73,17 +76,11 @@ class InferenceConfig(YCBVConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    DETECTION_MIN_CONFIDENCE = 0.1
-    # DETECTION_NMS_THRESHOLD = 0.1
-    USE_DEPTH_AWARE_OPS = False
-    # IMAGE_CHANNEL_COUNT = 3
-
-    # Image mean (RGB)
-    # MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 0.0])
-    # MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
-    IMAGE_MIN_DIM = 480
-    IMAGE_MAX_DIM = 640
-    IMAGE_RESIZE_MODE = "square"
+    USE_DEPTH_AWARE_OPS = True
+    POSE_ESTIMATION_METHOD = "pointnet"
+    POINTNET_VECTOR_SIZE = 1024
+    TRAIN_ROIS_PER_IMAGE = 100
+    # IMAGE_RESIZE_MODE = "square"
 
 
 config = InferenceConfig()
@@ -134,7 +131,7 @@ def calculate_2d_hull_of_pointcloud(pc, rot, trans, camera_calibration_matrix):
 
 
 def load_YCB_meta_infos(id):
-    path = "/media/pohl/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
+    path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
     meta = io.loadmat(path)
     int_matrix = meta["intrinsic_matrix"]
     classes = meta["cls_indexes"]
@@ -173,7 +170,7 @@ def get_orientation_line_points(pose, K, scale=0.05):
 
 
 def load_bbox(id):
-    path = "/media/pohl/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
+    path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
     d = {}
     with open(path, "r") as f:
         for row in f:
@@ -184,7 +181,7 @@ def load_bbox(id):
 
 
 def load_classes_id_dict():
-    path = "/media/pohl/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
+    path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
     d = {}
     with open(path, "r") as f:
         for i, val in enumerate(f):
@@ -193,28 +190,31 @@ def load_classes_id_dict():
 
 
 dataset = YCBVDataset()
-dataset.load_ycbv("/media/pohl/Hitachi/YCB_Video_Dataset/", "trainval", use_rgbd=config.USE_DEPTH_AWARE_OPS)
+dataset.load_ycbv(DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/", "trainval", use_rgbd=config.USE_DEPTH_AWARE_OPS)
 dataset.prepare()
 
-dpt_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0054/000016-depth.png"
-img_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0054/000016-color.png"
+dpt_file = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/0054/000016-depth.png"
+img_file = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/0054/000016-color.png"
 # img_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0081/000982-color.png"
 # dpt_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0054/000001-depth.png"
 # dpt_file = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-34.152_depth.png"
 # img_file = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-34.152_rgb.png"
 import skimage.io as skio
 
-image = skio.imread(img_file)
-# # image = dataset.load_image(dataset.image_from_source_map["YCBV.0081/000982"])
-depth = skio.imread(dpt_file)
-# depth = np.power((np.left_shift(depth[:, :, 1].astype(np.uint32), 8) + depth[:, :, 0]) / 1000., 2)
-depth = depth / 10000
-# # image = cv2.imread(img_file, -1)
-# # depth = cv2.imread(dpt_file, -1) / 10000
-bboxs = load_bbox("0054/000016")
-intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos("0054/000016")
-# objs = ["Ape", "Can", "Cat", "Driller", "Duck", "Eggbox", "Glue"]
-# pc = linemod_point_cloud("/media/pohl/Hitachi/YCB_Video_Dataset/models/025_mug/points.xyz")
+image_id = random.choice(dataset.image_ids)
+# image_id = 8736
+image_molded, image_meta, gt_class_id, gt_bbox, gt_mask, gt_pose, intrinsic_matrix_gt =\
+    load_image_gt(dataset, config, image_id, use_mini_mask=False)
+image = dataset.load_image(image_id)
+depth = image[:, :, 3]
+info = dataset.image_info[image_id]
+
+intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos(info["id"])
+print("image ID: {}.{} ({}) {}".format(info["source"], info["id"], image_id,
+                                       dataset.image_reference(image_id)))
+# Run object detection
+results = model.detect([image], verbose=1, intrinsic_matrix=[intrinsic_matrix])
+
 # X = []
 # for i in range(len(classes)):
 #     points = get_orientation_line_points(poses[:, :, i], intrinsic_matrix)
@@ -246,11 +246,13 @@ classes_dict = load_classes_id_dict()
 # image, image_meta, class_ids, bbox, mask = modellib.load_image_gt(dataset, config, dataset.image_from_source_map["YCBV.0054/000016"])
 # Run detection
 # results = model.detect([np.concatenate((image, np.expand_dims(depth, 2)), axis=2)], verbose=1)
-results = model.detect([image], verbose=1)
+# results = model.detect([image], verbose=1)
 
 # Visualize results
 r = results[0]
-visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], classes_dict, r['scores'])
+visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'],
+                            classes_dict, r['scores'], poses=r["poses"],
+                            intrinsic_matrix=intrinsic_matrix)
 # visualize.display_differences(image, bbox, class_ids, mask, r['rois'], r['class_ids'], r['scores'], r['masks'], classes_dict)
 
 
@@ -316,7 +318,7 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
             os.remove("model.pcd")
         # transform xyz pointcloud to pcl format
         sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
-        model_path = osp.join("/media/pohl/Hitachi/YCB_Video_Dataset/models", key)
+        model_path = osp.join(DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/models", key)
         if not osp.exists(osp.join(model_path, "model_downsampled.pcd")):
             sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
                    stdout=sp.DEVNULL, check=True)
@@ -384,7 +386,7 @@ def get_ransac_RT(results, bboxes, intrinsic_matrix, depth, image, voxel_size=0.
         # transform xyz pointcloud to pcl format
         # sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
 
-        model_path = osp.join("/media/pohl/Hitachi/YCB_Video_Dataset/models", key)
+        model_path = osp.join(DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/models", key)
         if not osp.exists(osp.join(model_path, "model.pcd")):
             sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
                    stdout=sp.DEVNULL, check=True)
@@ -426,30 +428,34 @@ def get_ransac_RT(results, bboxes, intrinsic_matrix, depth, image, voxel_size=0.
     return poses, item_correspondences
 
 
-def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, classes_dict, intrinsic_matrix,
+def visualize_icp_vs_ground_truth(image, depth, poses, classes, gt_poses, gt_classes, classes_dict, intrinsic_matrix,
                                   masks=None, item_corr=None, mode="vector", show_mask=False):
     assert mode in ["vector", "hull", "both"]
     fig, ax = plt.subplots(1, 2)
     fig.set_size_inches(15, 30)
     ax[0].imshow(image)
     ax[1].imshow(depth)
-    for i, id in enumerate(classes):
+    for i, id in enumerate(gt_classes):
         name = classes_dict[id[0]]  # id = 0 is probably background ??
-        icp_pose = icp_poses[name]
-        pose = gt_poses[:, :, i]
+        gt_pose = gt_poses[:, :, i]
+        try:
+            j = np.where(classes == id[0])[0][0]
+        except IndexError:
+            continue
+        pose = poses[j]
         if mode == "hull" or mode == "both":
-            model_path = "/media/pohl/Hitachi/YCB_Video_Dataset/models"
+            model_path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/models"
             pc = linemod_point_cloud(osp.join(model_path, name, "points.xyz"))
-            pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, pose[:, :3], pose[:, 3], intrinsic_matrix)
-            icp_pc_2d, icp_hull = calculate_2d_hull_of_pointcloud(pc, icp_pose[:3, :3], icp_pose[:3, 3],
+            pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, gt_pose[:, :3], gt_pose[:, 3], intrinsic_matrix)
+            pred_pc_2d, pred_hull = calculate_2d_hull_of_pointcloud(pc, pose[:3, :3], pose[:3, 3],
                                                                   intrinsic_matrix)
             for simplex in hull.simplices:
                 ax[0].plot(pc_2d[simplex, 0], pc_2d[simplex, 1], 'k-')
-            for simplex in icp_hull.simplices:
-                ax[0].plot(icp_pc_2d[simplex, 0], icp_pc_2d[simplex, 1], 'r-')
+            for simplex in pred_hull.simplices:
+                ax[0].plot(pred_pc_2d[simplex, 0], pred_pc_2d[simplex, 1], 'r-')
         if mode == "vector" or mode == "both":
-            p = get_orientation_line_points(pose, intrinsic_matrix)
-            icp_p = get_orientation_line_points(icp_pose[:3, :], intrinsic_matrix)
+            p = get_orientation_line_points(gt_pose, intrinsic_matrix)
+            icp_p = get_orientation_line_points(pose[:3, :], intrinsic_matrix)
             ax[0].plot([p[0, 0], p[1, 0]], [p[0, 1], p[1, 1]], "r-")
             ax[0].plot([p[0, 0], p[2, 0]], [p[0, 1], p[2, 1]], "g-")
             ax[0].plot([p[0, 0], p[3, 0]], [p[0, 1], p[3, 1]], "y-")
@@ -467,7 +473,26 @@ def visualize_icp_vs_ground_truth(image, depth, icp_poses, gt_poses, classes, cl
     plt.show()
 
 #
-icp_poses, item_corr = get_ransac_RT(r, bboxs, intrinsic_matrix, depth=depth, image=image, voxel_size=0.0001)
+# icp_poses, item_corr = get_ransac_RT(r, bboxs, intrinsic_matrix, depth=depth, image=image, voxel_size=0.0001)
 # icp_poses, item_corr = get_icp_RT(r, bboxs, intrinsic_matrix)
-visualize_icp_vs_ground_truth(image, depth, icp_poses, poses, classes, classes_dict, intrinsic_matrix, r["masks"],
-                              item_corr, show_mask=True, mode="both")
+def order_array_with_respect_to(x, y):
+    """
+
+    :param x: array that is to be ordered
+    :param y: array that is to be compared to
+    :return: ordered indices of x that are present in y
+    """
+    index = np.argsort(x)
+    sorted_x = x[index]
+    sorted_index = np.searchsorted(sorted_x, y)
+    yindex = np.take(index, sorted_index, mode="clip")
+    mask = x[yindex] != y
+    return yindex[~mask]
+
+ids = order_array_with_respect_to(r["class_ids"], classes)
+
+visualize_icp_vs_ground_truth(np.array(image[:, :, :3], dtype=np.int16),
+                              depth, r["poses"], r["class_ids"],
+                              poses, classes, classes_dict,
+                              intrinsic_matrix, r["masks"][ids],
+                              show_mask=False, mode="both")

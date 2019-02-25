@@ -25,6 +25,7 @@ from utils import utils
 from mrcnn import visualize
 from samples.YCB_Video.Test_Pose_Estimation import load_YCB_meta_infos
 import mrcnn.model as modellib
+from mrcnn.data_generation import load_image_gt
 from mrcnn.pointnet_pose_estimation import build_fpn_pointnet_pose_graph
 from mrcnn.Chamfer_Distance_Loss import mrcnn_pose_loss_graph_keras
 import open3d as o3d
@@ -117,7 +118,7 @@ model.load_weights(MODEL_PATH, by_name=True)#, exclude=["mrcnn_pointnet_rot_fc3"
 image_id = random.choice(dataset.image_ids)
 # image_id = 95506
 info = dataset.image_info[image_id]
-image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_pose, intrinsic_matrix_gt = modellib.load_image_gt(dataset, config, image_id,
+image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_pose, intrinsic_matrix_gt = load_image_gt(dataset, config, image_id,
                                                                                    use_mini_mask=False)
 intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos(info["id"])
 
@@ -299,7 +300,6 @@ if TEST_MODE is "training":
 
     ], return_gradients=False)
     det_class_ids = activations['target_class_ids'][0].astype(np.int32)
-k.losses.mse
 det_count = np.where(det_class_ids == 0)[0][0]
 det_class_ids = det_class_ids[:det_count]
 detections = activations['rois'][0, :det_count]
@@ -447,7 +447,7 @@ r = np.matmul(u, vh)
 # np.testing.assert_allclose(r, activations["pose_pred_rot_svd_matmul"], rtol=1e-3)
 concat_poses2 = np.concatenate([r,
                                np.transpose(activations["pose_y_pred_t"], [0, 2, 1])], axis=2)
-visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix)
+visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class_ids"], intrinsic_matrix_gt)
 
 
 ##### Check correctness of CalcRotMatrix

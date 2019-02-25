@@ -2,7 +2,7 @@ import keras.layers as KL
 import keras.engine as KE
 import tensorflow as tf
 
-from utils import utils, keras_util
+from utils import utils, keras_util, tf_util
 from utils.pointnet_util import pointnet_sa_module_msg, pointnet_sa_module, pointnet_fp_module
 
 class FeaturePointCloud(KE.Layer):
@@ -248,7 +248,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
 
         Returns: Trans [[batch, num_rois, 3, 1, num_classes]
         """
-
+    # TODO: as it seems, TRAIN_ROIS_PER_IMAGE (200) becomes DETECTION_MAX_INSTANCES (100) for inference
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
     x, d = keras_util.PyramidROIAlign([pool_size, pool_size], depth_image=depth_image,
@@ -279,14 +279,14 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
     rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                     9 * config.NUM_CLASSES, last_activation="sigmoid",
+                                     6 * config.NUM_CLASSES, last_activation="sigmoid",
                                      vector_size=config.POINTNET_VECTOR_SIZE)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
-                     3, 3, config.NUM_CLASSES), name="rot_reshape")(rot)
+                     3, 2, config.NUM_CLASSES), name="rot_reshape")(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
-    # rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
+    rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
 
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])
@@ -403,3 +403,42 @@ class FeaturePropagationLayer(KL.Layer):
     def compute_output_shape(self, input_shape):
         xyz1_shape = input_shape[0]
         return (xyz1_shape[0], xyz1_shape[1], self.mlp[-1])
+
+
+def build_PointNet2_Keras_Graph(l0_xyz, l0_points, is_training, bn_decay, end_points):
+    # Set abstraction layers
+    l1_xyz, l1_points = MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
+                                                              [32, 64, 128],
+                                                              [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
+                                                              is_training, bn_decay,
+                                                              name='msg_layer1')([l0_xyz, l0_points,])
+    l2_xyz, l2_points = MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
+                                                              [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
+                                                              is_training, bn_decay,
+                                                              name='msg_layer2')([l1_xyz, l1_points])
+    l3_xyz, l3_points, _ = SetAbstractionLayer(npoint=None, radius=None, nsample=None,
+                                               mlp=[128, 256, 1024], mlp2=None, group_all=True,
+                                               is_training=is_training, bn_decay=bn_decay,
+                                               name='layer3')([l2_xyz, l2_points])
+
+    # Feature Propagation layers
+    # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
+    l2_points = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name='fa_layer1')([l2_xyz, l3_xyz, l2_points, l3_points])
+    l1_points = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name='fa_layer2')([l1_xyz, l2_xyz, l1_points, l2_points])
+    l0_points = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name='fa_layer3')([l0_xyz, l1_xyz,
+                                                           tf.concat([l0_xyz, l0_points], axis=-1), l1_points])
+
+    # FC layers
+    net = KL.Lambda(lambda y: tf_util.conv1d(y, 128, 1, padding='VALID', bn=True,
+                                             is_training=is_training, scope='conv1d-fc1',
+                                             bn_decay=bn_decay), name='conv1d-fc1')(l0_points)
+    end_points['feats'] = net
+    net = KL.Lambda(lambda y: tf_util.dropout(y, keep_prob=0.7,
+                          is_training=is_training, scope='dp1'), name="dp1")(net)
+    logits = KL.Lambda(lambda y: tf_util.conv1d(y, 2, 1, padding='VALID',
+                                                activation_fn=None, scope='conv1d-fc2'),
+                       name="conv1d-fc2")(net)
+    return logits

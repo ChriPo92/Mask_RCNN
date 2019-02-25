@@ -360,9 +360,23 @@ class MaskRCNN():
                                               config.NUM_CLASSES,
                                               train_bn=config.TRAIN_BN)
             if config.ESTIMATE_6D_POSE:
-                mrcnn_pose_trans, mrcnn_pose_rot = ku.build_fpn_pose_graph(detection_boxes, mrcnn_feature_maps,
-                                                  input_depth, input_image_meta,
-                                                  config.NUM_CLASSES, config.TRAIN_BN)
+                mrcnn_pose_trans, mrcnn_pose_rot = None, None
+                if config.POSE_ESTIMATION_METHOD in ["image_features", "both"]:
+                    mrcnn_pose_trans, mrcnn_pose_rot = ku.build_fpn_pose_graph(detection_boxes, mrcnn_feature_maps,
+                                                                            input_depth, input_image_meta,
+                                                                            config.NUM_CLASSES, config.TRAIN_BN)
+                if config.POSE_ESTIMATION_METHOD in ["pointnet", "both"]:
+                    point_pose_trans, point_pose_rot = pn.build_fpn_pointnet_pose_graph(detection_boxes, mrcnn_feature_maps,
+                                                                                     input_depth, input_image_meta,
+                                                                                     input_intrinsic_matrices,
+                                                                                     config, config.POSE_POOL_SIZE,
+                                                                                     config.TRAIN_BN)
+                    if mrcnn_pose_rot is None and mrcnn_pose_trans is None:
+                        mrcnn_pose_trans = point_pose_trans
+                        mrcnn_pose_rot = point_pose_rot
+                    else:
+                        mrcnn_pose_trans = KL.Add(name="mrcnn_pose_trans_merged")([mrcnn_pose_trans, point_pose_trans])
+                        mrcnn_pose_rot = KL.Add(name="mrcnn_pose_rot_merged")([mrcnn_pose_rot, point_pose_rot])
             inputs = [input_image, input_image_meta, input_anchors]
             outputs = [detections, mrcnn_class, mrcnn_bbox,
                        mrcnn_mask, rpn_rois, rpn_class, rpn_bbox]
@@ -712,7 +726,7 @@ class MaskRCNN():
         )
         self.epoch = max(self.epoch, epochs)
 
-    def mold_inputs(self, images):
+    def mold_inputs(self, images, intrinsic_matrices):
         """Takes a list of images and modifies them to the format expected
         as an input to the neural network.
         images: List of image matrices [height,width,depth]. Images can have
@@ -727,7 +741,10 @@ class MaskRCNN():
         molded_images = []
         image_metas = []
         windows = []
-        for image in images:
+        adapted_int_matrices = []
+        for i in range(len(images)):
+            image = images[i]
+            intr_mat = None
             # Resize image
             # TODO: move resizing to mold_image()
             molded_image, window, scale, padding, crop = utils.resize_image(
@@ -736,6 +753,13 @@ class MaskRCNN():
                 min_scale=self.config.IMAGE_MIN_SCALE,
                 max_dim=self.config.IMAGE_MAX_DIM,
                 mode=self.config.IMAGE_RESIZE_MODE)
+            if intrinsic_matrices is not None:
+                intr_mat = intrinsic_matrices[i].copy()
+                assert scale == 1
+                top = padding[0][0]
+                left = padding[1][0]
+                intr_mat[0, 2] = intr_mat[0, 2] + left
+                intr_mat[1, 2] = intr_mat[1, 2] + top
             molded_image = data.mold_image(molded_image, self.config)
             # Build image_meta
             image_meta = data.compose_image_meta(
@@ -745,11 +769,12 @@ class MaskRCNN():
             molded_images.append(molded_image)
             windows.append(window)
             image_metas.append(image_meta)
+            adapted_int_matrices.append(intr_mat)
         # Pack into arrays
         molded_images = np.stack(molded_images)
         image_metas = np.stack(image_metas)
         windows = np.stack(windows)
-        return molded_images, image_metas, windows
+        return molded_images, image_metas, windows, adapted_int_matrices
 
     def unmold_detections(self, detections, mrcnn_mask, original_image_shape,
                           image_shape, window, trans=None, rot=None):
@@ -785,15 +810,15 @@ class MaskRCNN():
         masks = mrcnn_mask[np.arange(N), :, :, class_ids]
         if rot is not None and trans is not None:
             f_rots = rot[np.arange(N), :, :, class_ids]
-            f_trans = trans[np.arange(N), :, class_ids]
+            f_trans = trans[np.arange(N), :, :, class_ids]
             # transform arbitrary matrix into a rotation matrix using svd
             # https://mathoverflow.net/questions/86539/closest-3d-rotation-matrix-in-the-frobenius-norm-sense
             u, s, vh = np.linalg.svd(f_rots)
             r = np.matmul(u, vh)
-            pre_poses = np.concatenate((r, np.expand_dims(f_trans, axis=-1)), axis=2)
+            pre_poses = np.concatenate((r, f_trans), axis=2)
             shape = pre_poses.shape
+            # add row to each pose containing [0, 0, 0, 1]
             poses = np.concatenate((pre_poses, np.tile([0, 0, 0, 1], (shape[0], 1, 1))), axis=1)
-
 
         # Translate normalized coordinates in the resized image to pixel
         # coordinates in the original image before resizing
@@ -831,7 +856,7 @@ class MaskRCNN():
 
         return boxes, class_ids, scores, full_masks, poses
 
-    def detect(self, images, verbose=0):
+    def detect(self, images, verbose=0, intrinsic_matrix=None):
         """Runs the detection pipeline.
 
         images: List of images, potentially of different sizes.
@@ -855,7 +880,7 @@ class MaskRCNN():
                 log("image", image)
 
         # Mold inputs to format expected by the neural network
-        molded_images, image_metas, windows = self.mold_inputs(images)
+        molded_images, image_metas, windows, intrinsic_matrices = self.mold_inputs(images, intrinsic_matrix)
 
         # Validate image sizes
         # All images in a batch MUST be of the same size
@@ -878,6 +903,20 @@ class MaskRCNN():
         if self.config.USE_DEPTH_AWARE_OPS:
             inputs = [molded_images[:, :, :, :3], np.expand_dims(molded_images[:, :, :, 3], axis=3), image_metas,
                       anchors]
+            if self.config.POSE_ESTIMATION_METHOD.lower() in ["pointnet", "both"]:
+                assert intrinsic_matrix is not None
+                int_mat = None
+                if type(intrinsic_matrices) is list:
+                    int_mat = np.stack(intrinsic_matrices, 0)
+                elif type(intrinsic_matrices) is np.ndarray:
+                    shape = intrinsic_matrices.shape
+                    dim = len(shape)
+                    if dim == 2:
+                        int_mat = np.expand_dims(intrinsic_matrices, 0)
+                    if int_mat.shape[0] != self.config.BATCH_SIZE:
+                        int_mat = np.tile(int_mat, (self.config.BATCH_SIZE, 1, 1))
+                assert int_mat.shape == (self.config.BATCH_SIZE, 3, 3)
+                inputs.append(int_mat)
         else:
             inputs = [molded_images, image_metas, anchors]
         mrcnn_pose_rot, mrcnn_pose_trans = None, None
@@ -1149,7 +1188,7 @@ class MaskRCNN():
             input_image = np.expand_dims(image, 0)
         # Anchors
         anchors = self.get_anchors(image_shape)
-        rpn_match, rpn_bbox = ku.build_rpn_targets(image.shape, anchors,
+        rpn_match, rpn_bbox = data.build_rpn_targets(image.shape, anchors,
                                                 class_ids, bbox, self.config)
         # Duplicate across the batch dimension because Keras requires it
         # TODO: can this be optimized to avoid duplicating the anchors?
