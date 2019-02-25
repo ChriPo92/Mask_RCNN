@@ -279,7 +279,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
     rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                     6 * config.NUM_CLASSES, last_activation="sigmoid",
+                                     6 * config.NUM_CLASSES, last_activation="tanh",
                                      vector_size=config.POINTNET_VECTOR_SIZE)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
