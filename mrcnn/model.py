@@ -283,7 +283,7 @@ class MaskRCNN():
                     mrcnn_pose_trans, mrcnn_pose_rot = ku.build_fpn_pose_graph(rois, mrcnn_feature_maps,
                                                                             input_depth, input_image_meta,
                                                                             config.NUM_CLASSES, config.TRAIN_BN)
-                if config.POSE_ESTIMATION_METHOD in ["pointnet", "both"]:
+                if config.POSE_ESTIMATION_METHOD in ["pointnet", "pointnet2", "both"]:
                     point_pose_trans, point_pose_rot = pn.build_fpn_pointnet_pose_graph(rois, mrcnn_feature_maps,
                                                                                      input_depth, input_image_meta,
                                                                                      input_intrinsic_matrices,

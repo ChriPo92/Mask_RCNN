@@ -273,14 +273,23 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
     concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
                                  name="point_cloud_repr_concat")([pcl_list, feature_list])
-    trans = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans",
-                                       3 * config.NUM_CLASSES, vector_size=config.POINTNET_VECTOR_SIZE)
+    if config.POSE_ESTIMATION_METHOD is "pointnet2":
+        concat_point_cloud = build_PointNet2_Feature_Graph(concat_point_cloud,
+                                                           train_bn, 0.5)
+        trans = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "trans",
+                                         3 * config.NUM_CLASSES)
+        rot = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "rot",
+                                         6 * config.NUM_CLASSES, last_activation="tanh")
+    else:
+        trans = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans",
+                                           3 * config.NUM_CLASSES,
+                                           vector_size=config.POINTNET_VECTOR_SIZE)
+        rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
+                                         6 * config.NUM_CLASSES, last_activation="tanh",
+                                         vector_size=config.POINTNET_VECTOR_SIZE)
     # transform to [batch, num_rois, 3, 1, num_classes]
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
-    rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                     6 * config.NUM_CLASSES, last_activation="tanh",
-                                     vector_size=config.POINTNET_VECTOR_SIZE)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                      3, 2, config.NUM_CLASSES), name="rot_reshape")(rot)
@@ -324,23 +333,21 @@ class MultiScaleGroupingSetAbstractionLayer(KL.Layer):
             new_xyz: [batch, npoint, 3]
             new_points: [batch, npoint, \sum_k{mlp[k][-1]}]
         """
-        xyz = inputs[0]
-        points = inputs[1]
+        xyz = tf.slice(inputs, [0, 0, 0], [-1, -1, 3])
+        points = tf.slice(inputs, [0, 0, 3], [-1, -1, -1])
         l_xyz, l_points = pointnet_sa_module_msg(xyz, points, npoint=self.npoint,
                                radius_list=self.radius_list, nsample_list=self.nsample_list,
                                mlp_list=self.mlp_list, is_training=self.is_training,
                                bn_decay=self.bn_decay, bn=self.bn, use_xyz=self.use_xyz,
                                use_nchw=self.use_nchw, scope=self.name)
-        return [l_xyz, l_points]
+        return tf.concat([l_xyz, l_points], axis=-1)
 
     def compute_output_shape(self, input_shape):
-        xyz_shape = input_shape[0]
-        points_shape = input_shape[1]
-        batch = xyz_shape[0]
+        batch = input_shape[0]
         channels = 0
         for l in self.mlp_list:
             channels += l[-1]
-        return [(batch, self.npoint, 3), (batch, self.npoint, channels)]
+        return (batch, self.npoint, 3 + channels)
 
 class SetAbstractionLayer(KL.Layer):
     def __init__(self, npoint, radius, nsample, mlp, mlp2,
@@ -363,9 +370,9 @@ class SetAbstractionLayer(KL.Layer):
         self.use_nchw = use_nchw
 
     def call(self, inputs, **kwargs):
-        xyz = inputs[0]
-        points = inputs[1]
-        l_xyz, l_points = pointnet_sa_module(xyz, points, npoint=self.npoint,
+        xyz = tf.slice(inputs, [0, 0, 0], [-1, -1, 3])
+        points = tf.slice(inputs, [0, 0, 3], [-1, -1, -1])
+        l_xyz, l_points, _ = pointnet_sa_module(xyz, points, npoint=self.npoint,
                                              radius=self.radius, nsample=self.nsample,
                                              mlp=self.mlp, mlp2=self.mlp2,
                                              group_all=self.group_all,
@@ -374,12 +381,12 @@ class SetAbstractionLayer(KL.Layer):
                                              bn=self.bn, pooling=self.pooling,
                                              knn=self.knn, use_xyz=self.use_xyz,
                                              use_nchw=self.use_nchw)
-        return [l_xyz, l_points]
+        return tf.concat([l_xyz, l_points], axis=-1)
 
     def compute_output_shape(self, input_shape):
-        batch = input_shape[0][0]
+        batch = input_shape[0]
         channels = self.mlp2[-1] if self.mlp2 is not None else self.mlp[-1]
-        return [(batch, self.npoint, 3), (batch, self.npoint, channels)]
+        return (batch, self.npoint, 3 + channels)
 
 class FeaturePropagationLayer(KL.Layer):
     def __init__(self, mlp, is_training, bn_decay, bn=True, **kwargs):
@@ -390,55 +397,108 @@ class FeaturePropagationLayer(KL.Layer):
         self.bn = bn
 
     def call(self, inputs, **kwargs):
-        xyz1 = inputs[0]
-        xyz2 = inputs[1]
-        points1 = inputs[2]
-        points2 = inputs[3]
-
-        new_points = pointnet_fp_module(xyz1, xyz2, points1, points2,
-                                        mlp=self.mlp, is_training=self.is_training,
-                                        bn_decay=self.bn_decay, scope=self.name, bn=self.bn)
-        return new_points
+        xyz1 = tf.slice(inputs[0], [0, 0, 0, 0], [-1, -1, -1, 3])
+        points1 = tf.slice(inputs[0], [0, 0, 0, 3], [-1, -1, -1, -1])
+        xyz2 = tf.slice(inputs[1], [0, 0, 0, 0], [-1, -1, -1, 3])
+        points2 = tf.slice(inputs[1], [0, 0, 0, 3], [-1, -1, -1, -1])
+        num_rois = xyz1.get_shape()[1]
+        points = []
+        for i in range(num_rois):
+            new_points = pointnet_fp_module(xyz1[:, i, :, :], xyz2[:, i, :, :], points1[:, i, :, :], points2[:, i, :, :],
+                                            mlp=self.mlp, is_training=self.is_training,
+                                            bn_decay=self.bn_decay, scope=self.name+f"_{i}", bn=self.bn)
+            points.append(new_points)
+        return tf.concat([xyz1, tf.stack(points, axis=1)], axis=-1)
 
     def compute_output_shape(self, input_shape):
         xyz1_shape = input_shape[0]
-        return (xyz1_shape[0], xyz1_shape[1], self.mlp[-1])
+        return (xyz1_shape[0], xyz1_shape[1], xyz1_shape[2], 3 + self.mlp[-1])
 
 
-def build_PointNet2_Keras_Graph(l0_xyz, l0_points, is_training, bn_decay, end_points):
+def build_PointNet2_Feature_Graph(concat_points, is_training, bn_decay):
     # Set abstraction layers
-    l1_xyz, l1_points = MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
+    # [batch, num_rois, pool_size², 7, 1]
+    concat_points = KL.Lambda(lambda y: tf.squeeze(y, axis=-1))(concat_points)
+    # [batch, num_rois, 128, 323] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 320]
+    l1_concat = KL.TimeDistributed(MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
                                                               [32, 64, 128],
                                                               [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
                                                               is_training, bn_decay,
-                                                              name='msg_layer1')([l0_xyz, l0_points,])
-    l2_xyz, l2_points = MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
+                                                              name='msg_layer1'))(concat_points)
+    # [batch, num_rois, 32, 643] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 640]
+    l2_concat = KL.TimeDistributed(MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
                                                               [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
                                                               is_training, bn_decay,
-                                                              name='msg_layer2')([l1_xyz, l1_points])
-    l3_xyz, l3_points, _ = SetAbstractionLayer(npoint=None, radius=None, nsample=None,
+                                                              name='msg_layer2'))(l1_concat)
+    # [batch, num_rois, 1, 1027] = [batch, num_rois, 1, 3] + [batch, num_rois, 1, 1024]
+    l3_concat = KL.TimeDistributed(SetAbstractionLayer(npoint=None, radius=None, nsample=None,
                                                mlp=[128, 256, 1024], mlp2=None, group_all=True,
                                                is_training=is_training, bn_decay=bn_decay,
-                                               name='layer3')([l2_xyz, l2_points])
+                                               name='layer3'))(l2_concat)
 
     # Feature Propagation layers
     # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
-    l2_points = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name='fa_layer1')([l2_xyz, l3_xyz, l2_points, l3_points])
-    l1_points = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name='fa_layer2')([l1_xyz, l2_xyz, l1_points, l2_points])
-    l0_points = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name='fa_layer3')([l0_xyz, l1_xyz,
-                                                           tf.concat([l0_xyz, l0_points], axis=-1), l1_points])
-
+    # [batch, num_rois, 32, 131] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 128]
+    l2_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name='fa_layer1')([l2_concat, l3_concat])
+    # [batch, num_rois, 128, 131] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 128]
+    l1_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name='fa_layer2')([l1_concat, l2_concat])
+    # [batch, num_rois, pool_size², 131]
+    l0_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name='fa_layer3')([concat_points, l1_concat])
+    # [batch, num_rois, pool_size², 128, 1]
+    l0_points = KL.Lambda(lambda y: tf.expand_dims(tf.slice(y, [0, 0, 0, 3],
+                                                            [-1, -1, -1, -1]),
+                                                   axis=-1))(l0_concat)
     # FC layers
-    net = KL.Lambda(lambda y: tf_util.conv1d(y, 128, 1, padding='VALID', bn=True,
-                                             is_training=is_training, scope='conv1d-fc1',
-                                             bn_decay=bn_decay), name='conv1d-fc1')(l0_points)
-    end_points['feats'] = net
-    net = KL.Lambda(lambda y: tf_util.dropout(y, keep_prob=0.7,
-                          is_training=is_training, scope='dp1'), name="dp1")(net)
-    logits = KL.Lambda(lambda y: tf_util.conv1d(y, 2, 1, padding='VALID',
-                                                activation_fn=None, scope='conv1d-fc2'),
-                       name="conv1d-fc2")(net)
-    return logits
+    # net = KL.TimeDistributed(KL.Lambda(lambda y: tf_util.conv1d(y, 128, 1, padding='VALID', bn=True,
+    #                                          is_training=is_training,
+    #                                          bn_decay=bn_decay), name='conv1d-fc1'))(l0_points)
+    # net = KL.TimeDistributed(KL.Lambda(lambda y: tf_util.dropout(y, keep_prob=0.7,
+    #                       is_training=is_training), name="dp1"))(net)
+    # logits = KL.TimeDistributed(KL.Lambda(lambda y: tf_util.conv1d(y, out_number, 1, padding='VALID',
+    #                                             activation_fn=None),
+    #                    name="conv1d-fc2"))(net)
+    return l0_points
+
+def build_PointNet2_Regr_Graph(point_cloud_tensor, pool_size, train_bn,
+                               name, out_number, last_activation="linear"):
+    # transform to [batch, num_rois, h*w(576), 1, 64]
+    x = KL.TimeDistributed(KL.Conv2D(128, (1, 128), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv1")(point_cloud_tensor)
+    x = KL.TimeDistributed(KL.BatchNormalization(),
+                                    name=f'mrcnn_pointnet_{name}_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    x = KL.TimeDistributed(KL.Conv2D(128, (1, 1), padding="valid"),
+                           name=f"mrcnn_pointnet_{name}_conv2")(x)
+    x = KL.TimeDistributed(KL.BatchNormalization(),
+                           name=f'mrcnn_pointnet_{name}_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, h*w(576), 1, 256]
+    x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
+                                    name=f"mrcnn_pointnet_{name}_conv4")(x)
+    x = KL.TimeDistributed(KL.BatchNormalization(),
+                                    name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, 1, 1, vector_size]
+    x = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
+                                    name=f"mrcnn_{name}_sym_max_pool")(x)
+    # transform to [batch, num_rois, vector_size]
+    x = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(x)
+    # transform to [batch, num_rois, 256]
+    x = KL.TimeDistributed(KL.Dense(256),
+                               name=f"mrcnn_pointnet_{name}_fc1")(x)
+    x = KL.TimeDistributed(KL.BatchNormalization(),
+                           name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # transform to [batch, num_rois, 128]
+    x = KL.TimeDistributed(KL.Dense(128),
+                           name=f"mrcnn_pointnet_{name}_fc2")(x)
+    x = KL.TimeDistributed(KL.BatchNormalization(),
+                           name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # [batch, num_rois, out_number]
+    x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
+                               name=f"mrcnn_pointnet_{name}_fc3")(x)
+    return x
