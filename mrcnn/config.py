@@ -248,7 +248,7 @@ class Config(object):
         # Image meta data length
         # See compose_image_meta() for details
         self.IMAGE_META_SIZE = 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES
-        assert self.POSE_ESTIMATION_METHOD in ["image_features", "pointnet", "both"]
+        assert self.POSE_ESTIMATION_METHOD in ["image_features", "pointnet", "pointnet2", "both"]
 
     def display(self):
         """Display Configuration values."""
