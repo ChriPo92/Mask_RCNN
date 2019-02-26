@@ -279,23 +279,23 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
         trans = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "trans",
                                          3 * config.NUM_CLASSES)
         rot = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                         6 * config.NUM_CLASSES, last_activation="tanh")
+                                         9 * config.NUM_CLASSES, last_activation="tanh")
     else:
         trans = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans",
                                            3 * config.NUM_CLASSES,
                                            vector_size=config.POINTNET_VECTOR_SIZE)
         rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                         6 * config.NUM_CLASSES, last_activation="tanh",
+                                         9 * config.NUM_CLASSES, last_activation="tanh",
                                          vector_size=config.POINTNET_VECTOR_SIZE)
     # transform to [batch, num_rois, 3, 1, num_classes]
     trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
                         3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
-                     3, 2, config.NUM_CLASSES), name="rot_reshape")(rot)
+                     3, 3, config.NUM_CLASSES), name="rot_reshape")(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
-    rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
+    # rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
 
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])

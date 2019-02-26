@@ -245,9 +245,9 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # to get an orthoganl matrix from any 3x3 matrix we use an SVD where
     # a = U * diag(S) * V^h
     # TODO: There seem to be Nans in the Gradient of the SVD
-    # s, u, v = SVD(name="mrcnn_pose_loss/pred_rot_svd")(y_pred_r)
-    # y_pred_r = KL.Lambda(lambda y: tf.linalg.matmul(y[0], y[1]),
-    #                      name="mrcnn_pose_loss/pred_rot_svd_matmul")([u, v])
+    s, u, v = SVD(name="mrcnn_pose_loss/pred_rot_svd")(y_pred_r)
+    y_pred_r = KL.Lambda(lambda y: tf.linalg.matmul(y[0], y[1]),
+                         name="mrcnn_pose_loss/pred_rot_svd_matmul")([u, v])
     pos_xyz_models = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
                                name="mrcnn_pose_loss/pos_xyz_models",
                                output_shape=(3, N,))(
