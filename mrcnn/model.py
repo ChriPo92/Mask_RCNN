@@ -285,9 +285,9 @@ class MaskRCNN():
                                                                             config.NUM_CLASSES, config.TRAIN_BN)
                 if config.POSE_ESTIMATION_METHOD in ["pointnet", "pointnet2", "both"]:
                     point_pose_trans, point_pose_rot = pn.build_fpn_pointnet_pose_graph(rois, mrcnn_feature_maps,
-                                                                                     input_depth, input_image_meta,
+                                                                                     input_depth, input_image_meta, mrcnn_mask,
                                                                                      input_intrinsic_matrices,
-                                                                                     config, config.POSE_POOL_SIZE,
+                                                                                     config, 2 * config.MASK_POOL_SIZE, # because the masks returned have shape 2 * MASK_POOL_SIZE x  2 * MASK_POOL_SIZE
                                                                                      config.TRAIN_BN)
                     if mrcnn_pose_rot is None and mrcnn_pose_trans is None:
                         mrcnn_pose_trans = point_pose_trans
@@ -509,7 +509,7 @@ class MaskRCNN():
             if layer.output in self.keras_model.losses:
                 continue
             loss = (
-                    tf.reduce_mean(layer.output, keepdims=True)
+                    tf.reduce_mean(layer.output)
                     * self.config.LOSS_WEIGHTS.get(name, 1.))
             self.keras_model.add_loss(loss)
 

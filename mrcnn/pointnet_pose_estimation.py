@@ -21,15 +21,15 @@ class FeaturePointCloud(KE.Layer):
         self.config = config
 
     def call(self, inputs, **kwargs):
-        def min_nonzero(tensor):
-            """
-            computes the minimum value of a tensor not including values that are 0
-            :param tensor:
-            :return:
-            """
-            mask = tf.greater(tensor, 0., name="depth_mask")
-            masked_tensor = tf.boolean_mask(tensor, mask)
-            return tf.reduce_min(masked_tensor)
+        # def min_nonzero(tensor):
+        #     """
+        #     computes the minimum value of a tensor not including values that are 0
+        #     :param tensor:
+        #     :return:
+        #     """
+        #     mask = tf.greater(tensor, 0., name="depth_mask")
+        #     masked_tensor = tf.boolean_mask(tensor, mask)
+        #     return tf.reduce_min(masked_tensor)
         # [batch, num_rois, (y1, x1, y2, x2)], [batch, num_rois, 24, 24, config.FEATURE_PYRAMIND_TOP_DOWN_SIZE]
         # [batch, num_rois, 24, 24, 1], [batch, 3, 3]
         rois, image_features, depth_image, intrinsic_matrices = inputs
@@ -37,7 +37,7 @@ class FeaturePointCloud(KE.Layer):
         y1, x1, y2, x2 = tf.split(rois, 4, axis=2)
         im_shape = tf.shape(image_features)
         # TODO: this works only as long as the rois have shape 24 x 24
-        batch = self.config.IMAGES_PER_GPU
+        batch = self.config.BATCH_SIZE
         num_rois = im_shape[1]
         h = tf.cast(self.feature_map_size[0], "float32")
         w = tf.cast(self.feature_map_size[1], "float32")
@@ -80,34 +80,34 @@ class FeaturePointCloud(KE.Layer):
         x_im = x_im / tf.reshape(intrinsic_matrices[:, 0, 0], (batch, 1, 1, 1))
         # [batch, num_rois, h*w, 1]
         # filter out all elements which have z == 0 for the minimum value
-        min_z = tf.reshape(utils.batch_slice([z_im], min_nonzero,
-                                             self.config.IMAGES_PER_GPU,
-                                             names=["min_nonzero_z"]),
-                           (batch, 1, 1, 1))
+        # min_z = tf.reshape(utils.batch_slice([z_im], min_nonzero,
+        #                                      self.config.IMAGES_PER_GPU,
+        #                                      names=["min_nonzero_z"]),
+        #                    (batch, 1, 1, 1))
         # rescales z to be between 0...1 for each batch, excluding the depth points == 0
         # reshapes z_im to [batch, num_rois*w*h], then takes then min/max along dimension 1
         # to result in an tensor of shape [batch]
-        sub1 = tf.subtract(
-                z_im,
-                min_z
-            )
-        sub2 = tf.subtract(
-            tf.reshape(
-                tf.reduce_max(
-                    tf.reshape(z_im, (batch, -1)),
-                    axis=1),
-                (batch, 1, 1, 1)),
-                min_z
-            )
+        # sub1 = tf.subtract(
+        #         z_im,
+        #         min_z
+        #     )
+        # sub2 = tf.subtract(
+        #     tf.reshape(
+        #         tf.reduce_max(
+        #             tf.reshape(z_im, (batch, -1)),
+        #             axis=1),
+        #         (batch, 1, 1, 1)),
+        #         min_z
+        #     )
 
         # z_im = tf.div(sub1, sub2)
         # [batch, num_rois, h*w, 3]
 
         positions = tf.concat([x_im, y_im, z_im], axis=-1, name="concat_positions")
         positions = tf.reshape(positions, (batch, num_rois, -1, 3))
-        # [batch, num_rois, h*w, config.FEATURE_PYRAMID_TOP_DOWN_SIZE]
         # print_op = tf.print([tf.shape(y_im), tf.shape(x_im), tf.shape(z_im), tf.shape(positions)])
         # with tf.control_dependencies([print_op]):
+        # [batch, num_rois, h*w, config.FEATURE_PYRAMID_TOP_DOWN_SIZE]
         features = tf.reshape(image_features, (batch, num_rois, -1, channels), name="reshape_features")
         return [positions, features]
 
@@ -119,57 +119,70 @@ class FeaturePointCloud(KE.Layer):
                         image_shape[:2] + (feature_maps, image_shape[-1])]
         return output_shape
 
-def build_PointNet_Keras_Graph(point_cloud_tensor, pool_size, train_bn,
+def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
                                name, out_number, last_activation="linear", vector_size=1024):
-    # transform to [batch, num_rois, h*w(576), 6, 16]
+    """
+
+    :param point_cloud_tensor: [batch, num_rois, classes, num_points, 7, 1]
+    :param num_points: num_points extracted from masks
+    :param train_bn:
+    :param name:
+    :param out_number:
+    :param last_activation:
+    :param vector_size: size of the pointnet vector
+    :return:
+    """
+    # transform to [batch, num_rois * num_classes, num_points, 6, 16]
+    point_cloud_tensor = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, -1, num_points,
+                                                            7, 1)))(point_cloud_tensor)
     x = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv1")(point_cloud_tensor)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                                     name=f'mrcnn_pointnet_{name}_bn1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, h*w(576), 4, 32]
+    # transform to [batch, num_rois * num_classes, num_points, 4, 32]
     x = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv2")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                                     name=f'mrcnn_pointnet_{name}_bn2')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, h*w(576), 1, 64]
+    # transform to [batch, num_rois * num_classes, num_points, 1, 64]
     x = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv3")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                                     name=f'mrcnn_pointnet_{name}_bn3')(x, training=train_bn)
 
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, h*w(576), 1, 256]
+    # transform to [batch, num_rois * num_classes, num_points, 1, 256]
     x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv4")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                                     name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, h*w(576), 1, vector_size]
+    # transform to [batch, num_rois * num_classes, num_points, 1, vector_size]
     x = KL.TimeDistributed(KL.Conv2D(vector_size, (1, 1), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv5")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                                     name=f'mrcnn_pointnet_{name}_bn5')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, 1, 1, vector_size]
-    x = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
+    # transform to [batch, num_rois * num_classes, 1, 1, vector_size]
+    x = KL.TimeDistributed(KL.MaxPool2D((num_points, 1), padding="valid"),
                                     name=f"mrcnn_{name}_sym_max_pool")(x)
-    # transform to [batch, num_rois, vector_size]
+    # transform to [batch, num_rois, num_classes, vector_size]
     x = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(x)
-    # transform to [batch, num_rois, 256]
+    # transform to [batch, num_rois * num_classes, 256]
     x = KL.TimeDistributed(KL.Dense(256),
                                name=f"mrcnn_pointnet_{name}_fc1")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                            name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois, 128]
+    # transform to [batch, num_rois * num_classes, 128]
     x = KL.TimeDistributed(KL.Dense(128),
                            name=f"mrcnn_pointnet_{name}_fc2")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                            name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # [batch, num_rois, out_number]
+    # [batch, num_rois * num_classes, out_number]
     x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
                                name=f"mrcnn_pointnet_{name}_fc3")(x)
     return x
@@ -234,7 +247,77 @@ class CalcRotMatrix(KL.Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[0], 3, 3, input_shape[-1])
 
-def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, intrinsic_matrices,
+class SamplePointsFromMaskedRegion(KL.Layer):
+
+    def __init__(self, num_points, **kwargs):
+        super(SamplePointsFromMaskedRegion, self).__init__(**kwargs)
+        self.num_points = num_points
+
+    def call(self, inputs, **kwargs):
+        """
+
+        :param inputs: [xyz, features, masks]
+            xyz: [batch, num_rois, pool_size * pool_size, 3, 1]
+            features: [batch, num_rois, pool_size * pool_size, 4, 1]
+            masks: [batch, num_rois, pool_size, pool_size, num_classes]
+        :param kwargs:
+        :return: [batch, num_rois, num_classes, num_points, 7, 1]
+        """
+        xyz, features, masks = inputs
+        shape = tf.shape(masks)
+        batch = shape[0]
+        num_rois = shape[1]
+        mask_area = shape[2] * shape[3]
+        num_classes = shape[-1]
+        # transform to [batch, num_rois, pool_size * pool_size, num_classes]
+        with tf.control_dependencies([tf.assert_equal(tf.shape(xyz)[2], mask_area)]):
+            masks = tf.reshape(masks, (batch, num_rois, -1, num_classes))
+        # [batch, num_rois, pool_size², x, num_classes] -> [batch, num_rois, num_classes, pool_size², x]
+        tiled_xyz = tf.transpose(tf.tile(xyz, [1, 1, 1, 1, num_classes]), [0, 1, 4, 2, 3])
+        tiled_features = tf.transpose(tf.tile(features, [1, 1, 1, 1, num_classes]), [0, 1, 4, 2, 3])
+        # [batch, num_rois, pool_size², num_classes]
+        bool_mask = tf.where(masks > 0.5, tf.ones_like(masks), tf.zeros_like(masks))
+        # TODO: this favors items from the top left corner and will bias the selected points
+        # use some random shuffling somewhere
+        # select the top "num_points" entries in the boolean mask tensor; since
+        # those are only 0 and 1, only not masked entries from the tensor are selected
+        # if there are less than "num_points" that are not masked, it is filled with
+        # other points
+        bool_values, bool_idx = tf.nn.top_k(tf.transpose(bool_mask, [0, 1, 3, 2]),
+                                            self.num_points, sorted=False)
+        # construct a index tensor that is compatible with tf.gather_nd, which needs
+        # the indices as the last dimension of the index-tensor
+        # create three tensors of shape [batch, num_rois, num_classes] with the indices
+        # to only one dimension
+        idx = tf.meshgrid(*[tf.range(s) for s in [batch, num_rois, num_classes]], indexing="ij")
+        # stack the index-tensors to [batch, num_rois, num_classes, 1, 3]
+        idx = tf.expand_dims(tf.stack(idx, axis=-1), axis=3)
+        # tile it "num_points" times to [batch, num_rois, num_class, num_points, 3]
+        idx = tf.tile(idx, [1, 1, 1, self.num_points, 1])
+        # concat with the indices of the points found by top_k;
+        # [batch, num_rois, num_classes, num_points, 3]
+        idx = tf.concat([idx, tf.expand_dims(bool_idx, axis=-1)], axis=-1)
+        # multiply the values from top_k with the points; this makes masked points equal to 0
+        tiled_xyz = tf.multiply(tf.expand_dims(bool_values, axis=-1),
+                                tf.gather_nd(tiled_xyz, idx))
+        # [batch, num_rois, num_classes, num_points, 3, 1]
+        tiled_xyz = tf.expand_dims(tiled_xyz, axis=-1)
+
+        tiled_features = tf.multiply(tf.expand_dims(bool_values, axis=-1),
+                                     tf.gather_nd(tiled_features, idx))
+        # [batch, num_rois, num_classes, num_points, 4, 1]
+        tiled_features = tf.expand_dims(tiled_features, axis=-1)
+        return tf.concat([tiled_xyz, tiled_features], axis=-2)
+
+    def compute_output_shape(self, input_shape):
+        batch = input_shape[0][0]
+        num_rois = input_shape[0][1]
+        num_classes = input_shape[2][-1]
+        return (batch, num_rois, num_classes, self.num_points, 7, 1)
+
+
+
+def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, masks, intrinsic_matrices,
                                     config, pool_size=18, train_bn=True):
     """Builds the computation graph of the pose estimation head of Feature Pyramid Network.
 
@@ -243,11 +326,13 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
         feature_maps: List of feature maps from different layers of the pyramid,
                       [P2, P3, P4, P5]. Each has a different resolution.
         image_meta: [batch, (meta data)] Image details. See compose_image_meta()
+        masks: [batch, num_rois, 2 * MASK_POOL_SIZE, 2 * MASK_POOL_SIZE, NUM_CLASSES] output from the mask_branch
         intrinsic_matrices: [batch, 3, 3] Intrinsic Matrix of the camera batch was taken with
         train_bn: Boolean. Train or freeze Batch Norm layers
 
         Returns: Trans [[batch, num_rois, 3, 1, num_classes]
         """
+    num_points = 100
     # TODO: as it seems, TRAIN_ROIS_PER_IMAGE (200) becomes DETECTION_MAX_INSTANCES (100) for inference
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
@@ -269,11 +354,13 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
     feature_list = KL.TimeDistributed(KL.BatchNormalization(),
                                       name='mrcnn_pose_feature_bn')(feature_list, training=train_bn)
     feature_list = KL.Activation('relu')(feature_list)
-    # merge to [batch, num_rois, h*w(576), 7, 1]
-    # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list)])
-    concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
-                                 name="point_cloud_repr_concat")([pcl_list, feature_list])
+    # merge to [batch, num_rois, num_classes, num_points, 7, 1]
+    concat_point_cloud = SamplePointsFromMaskedRegion(num_points,
+                                                      name="point_cloud_repr_concat")([pcl_list, feature_list, masks])
+    # concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
+    #                              name="point_cloud_repr_concat")([pcl_list, feature_list])
     if config.POSE_ESTIMATION_METHOD is "pointnet2":
+        assert False
         concat_point_cloud = build_PointNet2_Feature_Graph(concat_point_cloud,
                                                            train_bn, 0.5)
         trans = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "trans",
@@ -281,18 +368,28 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, i
         rot = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "rot",
                                          9 * config.NUM_CLASSES, last_activation="tanh")
     else:
-        trans = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "trans",
-                                           3 * config.NUM_CLASSES,
+        trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
+                                           train_bn, "trans", 3,
                                            vector_size=config.POINTNET_VECTOR_SIZE)
-        rot = build_PointNet_Keras_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                         9 * config.NUM_CLASSES, last_activation="tanh",
+        # transform to [batch, num_rois, num_classes, 3, 1]
+        trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
+                            1, 3, 1), name="trans_reshape")(trans)
+        pcl_list = KL.Lambda(lambda y: y[:, :, :, :, :3])(concat_point_cloud)
+        feature_list = KL.Lambda(lambda y: y[:, :, :, :, 3:])(concat_point_cloud)
+        pcl_list = KL.Subtract()([pcl_list, trans])
+        concat_point_cloud = KL.Lambda(lambda y: tf.concat(y, axis=-2),
+                                       name="centered_concat_point_clouds")([pcl_list, feature_list])
+        rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
+                                         train_bn, "rot", 9,
+                                         last_activation="tanh",
                                          vector_size=config.POINTNET_VECTOR_SIZE)
-    # transform to [batch, num_rois, 3, 1, num_classes]
-    trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
-                        3, 1, config.NUM_CLASSES), name="trans_reshape")(trans)
+
+    # [batch, num_rois, 3, 1, num_classes]
+    trans = KL.Lambda(lambda y: tf.transpose(tf.squeeze(y, axis=3), [0, 1, 3, 4, 2]))(trans)
     # [batch, num_rois, 3, 2, num_classes]
-    rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE,
-                     3, 3, config.NUM_CLASSES), name="rot_reshape")(rot)
+    rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
+                     3, 3), name="rot_reshape")(rot)
+    rot = KL.Lambda(lambda y: tf.transpose(y, [0, 1, 3, 4, 2]))(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
     # rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
