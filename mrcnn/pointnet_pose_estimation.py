@@ -153,8 +153,8 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
                                     name=f'mrcnn_pointnet_{name}_bn3')(x, training=train_bn)
 
     x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, num_points, 1, 256]
-    x = KL.TimeDistributed(KL.Conv2D(256, (1, 1), padding="valid"),
+    # transform to [batch, num_rois * num_classes, num_points, 1, 128]
+    x = KL.TimeDistributed(KL.Conv2D(128, (1, 1), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv4")(x)
     x = KL.TimeDistributed(KL.BatchNormalization(),
                                     name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
