@@ -169,7 +169,7 @@ class YCBVDataset(utils.Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         # If grayscale. Convert to RGB for consistency.
         if image.ndim != 3:
-            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB) 
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         # If has an alpha channel, remove it for consistency
         if image.shape[-1] == 4:
             image = image[..., :3]
@@ -295,7 +295,7 @@ class YCBVConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
-    # STEPS_PER_EPOCH = 2
+    #STEPS_PER_EPOCH = 2
     # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = False
 
