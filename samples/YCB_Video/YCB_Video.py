@@ -295,11 +295,11 @@ class YCBVConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
-    # STEPS_PER_EPOCH = 203
+    # STEPS_PER_EPOCH = 2
     # TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = False
 
-    LEARNING_RATE = 0.001
+    LEARNING_RATE = 0.01
     GRADIENT_CLIP_NORM = 5.0
     ESTIMATE_6D_POSE = True
     POSE_ESTIMATION_METHOD = "pointnet"
@@ -772,48 +772,52 @@ if __name__ == '__main__':
         # builder = tf.profiler.ProfileOptionBuilder
         # opts = builder(builder.time_and_memory()).order_by('micros').build()
         # opts2 = tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()
-        num += 65
+        # ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
+        # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
+        #                            ).with_node_names(show_name_regexes=['.*']).order_by('bytes')
+        #                           .with_text_output("./output.txt")
+        #                           .with_timeline_output("./timeline.json").build()
+        # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
+        num += 80
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
+        # tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="scope", options=opts)
         # tl = timeline.Timeline(model.run_metadata.step_stats)
         # ctf = tl.generate_chrome_trace_format()
         #
         # with open('./timeline.json', 'w') as f:
         #     f.write(ctf)
         #
-        # ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
-        # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
-        #                             ).with_node_names(show_name_regexes=['.*']).build()
-        # prof = tf.profiler.profile(KB.get_session().graph, model.run_metadata, cmd="code", options=opts)
         # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
         # prof.add_step(1, model.run_metadata)
-
+        # with open('./profile', 'wb') as f:
+        #     f.write(prof.serialize_to_string())
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
-        num += 60
-        layers = '4+'
-        print("Fine tune Resnet stage 4 and up")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE/20,
-                    epochs=num,
-                    layers=layers,
-                    augmentation=augmentation)
-        # prof.add_step(2, model.run_metadata)
-
-
-        # # Training - Stage 3
-        # # Fine tune all layers
-        num += 25
-        print("Fine tune all layers")
-        model.train(dataset_train, dataset_val,
-                        learning_rate=config.LEARNING_RATE / 100,
-                        epochs=num,
-                        layers='all',
-                        augmentation=augmentation)
+        # num += 60
+        # layers = '4+'
+        # print("Fine tune Resnet stage 4 and up")
+        # model.train(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE/20,
+        #             epochs=num,
+        #             layers=layers,
+        #             augmentation=augmentation)
+        # # prof.add_step(2, model.run_metadata)
+        #
+        #
+        # # # Training - Stage 3
+        # # # Fine tune all layers
+        # num += 25
+        # print("Fine tune all layers")
+        # model.train(dataset_train, dataset_val,
+        #                 learning_rate=config.LEARNING_RATE / 100,
+        #                 epochs=num,
+        #                 layers='all',
+        #                 augmentation=augmentation)
         # prof.add_step(3, model.run_metadata)
         # with open('./profile_rgbd', 'wb') as f:
         #     f.write(prof.serialize_to_string())
