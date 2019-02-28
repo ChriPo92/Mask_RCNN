@@ -130,62 +130,74 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     :param out_number:
     :param last_activation:
     :param vector_size: size of the pointnet vector
-    :return:
+    :return: [batch, num_rois, num_classes, out_number]
     """
+    # transform to [batch, num_rois * num_classes, num_points, 7, 1]
+    # point_cloud_tensor = KL.Lambda(lambda y: tf.transpose(y, []))(point_cloud_tensor)
+    # point_cloud_tensor = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, -1, num_points,
+    #                                                         7, 1)))(point_cloud_tensor)
     # transform to [batch, num_rois * num_classes, num_points, 6, 16]
-    point_cloud_tensor = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, -1, num_points,
-                                                            7, 1)))(point_cloud_tensor)
-    x = KL.TimeDistributed(KL.Conv2D(16, (1, 2), padding="valid"),
-                                    name=f"mrcnn_pointnet_{name}_conv1")(point_cloud_tensor)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                                    name=f'mrcnn_pointnet_{name}_bn1')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, num_points, 4, 32]
-    x = KL.TimeDistributed(KL.Conv2D(32, (1, 3), padding="valid"),
-                                    name=f"mrcnn_pointnet_{name}_conv2")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                                    name=f'mrcnn_pointnet_{name}_bn2')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, num_points, 1, 64]
-    x = KL.TimeDistributed(KL.Conv2D(64, (1, 4), padding="valid"),
-                                    name=f"mrcnn_pointnet_{name}_conv3")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                                    name=f'mrcnn_pointnet_{name}_bn3')(x, training=train_bn)
+    class_partials = []
+    # we don't want to use TimeDistributed here, since it uses the same weights for each
+    # temporal slice. Therefore we switch to a for loop, which is not a perfect solution.
+    # The rois are handled as seperate columns of an "image", where only the columns belonging
+    # to one roi are used together (i.e. in the first step the kernel is of size (1, 7) and
+    # the step size is (also 1, 7)
+    for j in range(config.NUM_CLASSES):
+        # extract for each class [batch, num_rois, num_points, 7, 1]
+        partial_point_cloud = KL.Lambda(lambda y: y[:, :, j, :, :])(point_cloud_tensor)
+        # transpose to [batch, num_points, num_rois, 7, 1] and reshape to [batch, num_points, num_rois * 7, 1]
+        partial_point_cloud = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 1, 3, 4]),
+                                                             (config.BATCH_SIZE, num_points, -1, 1)))(partial_point_cloud)
+        # transform to [batch, num_points, num_rois, 64]
+        x = KL.Conv2D(64, (1, 7), strides=(1, 7), padding="valid", name=f"mrcnn_pointnet_{name}_conv1_class_{j}")(partial_point_cloud)
+        x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn1_class_{j}')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        # # transform to [batch, num_rois * num_classes, num_points, 4, 32]
+        # x = KL.Conv2D(32, (1, 3), padding="valid",
+        #               name=f"mrcnn_pointnet_{name}_conv2")(x)
+        # x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn2')(x, training=train_bn)
+        # x = KL.Activation('relu')(x)
+        # # transform to [batch, num_rois * num_classes, num_points, 1, 64]
+        # x = KL.Conv2D(64, (1, 4), padding="valid",
+        #               name=f"mrcnn_pointnet_{name}_conv3")(x)
+        # x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn3')(x, training=train_bn)
+        #
+        # x = KL.Activation('relu')(x)
+        # transform to [batch, num_points, num_rois, 128]
+        x = KL.Conv2D(128, (1, 1), padding="valid",
+                      name=f"mrcnn_pointnet_{name}_conv4_class_{j}")(x)
+        x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn4_class_{j}')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        # transform to [batch, num_points, num_rois, vector_size]
+        x = KL.Conv2D(vector_size, (1, 1), padding="valid",
+                      name=f"mrcnn_pointnet_{name}_conv5_class_{j}")(x)
+        x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn5_class_{j}')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        # transform to [batch, 1, num_rois, vector_size]
+        x = KL.MaxPool2D((num_points, 1), padding="valid",
+                         name=f"mrcnn_{name}_sym_max_pool_class_{j}")(x)
+        # transform to [batch, num_rois, vector_size]
+        x = KL.Lambda(lambda y: tf.squeeze(y, axis=[1]))(x)
+        # transform to [batch, num_rois, 256]
+        x = KL.Dense(256,
+                     name=f"mrcnn_pointnet_{name}_fc1_class_{j}")(x)
+        x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn6_class_{j}')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        # transform to [batch, num_rois, 128]
+        x = KL.Dense(128,
+                     name=f"mrcnn_pointnet_{name}_fc2_class_{j}")(x)
+        x = KL.BatchNormalization(
+            name=f'mrcnn_pointnet_{name}_bn7_class_{j}')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        # [batch, num_rois, out_number]
+        x = KL.Dense(out_number, activation=last_activation,
+                     name=f"mrcnn_pointnet_{name}_fc3_class_{j}")(x)
+        class_partials.append(x)
+    # stack the partials to [batch, num_rois, num_classes, out_number]
+    p = KL.Lambda(lambda y: tf.stack(y, axis=2))(class_partials)
 
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, num_points, 1, 128]
-    x = KL.TimeDistributed(KL.Conv2D(128, (1, 1), padding="valid"),
-                                    name=f"mrcnn_pointnet_{name}_conv4")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                                    name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, num_points, 1, vector_size]
-    x = KL.TimeDistributed(KL.Conv2D(vector_size, (1, 1), padding="valid"),
-                                    name=f"mrcnn_pointnet_{name}_conv5")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                                    name=f'mrcnn_pointnet_{name}_bn5')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, 1, 1, vector_size]
-    x = KL.TimeDistributed(KL.MaxPool2D((num_points, 1), padding="valid"),
-                                    name=f"mrcnn_{name}_sym_max_pool")(x)
-    # transform to [batch, num_rois, num_classes, vector_size]
-    x = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(x)
-    # transform to [batch, num_rois * num_classes, 256]
-    x = KL.TimeDistributed(KL.Dense(256),
-                               name=f"mrcnn_pointnet_{name}_fc1")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                           name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # transform to [batch, num_rois * num_classes, 128]
-    x = KL.TimeDistributed(KL.Dense(128),
-                           name=f"mrcnn_pointnet_{name}_fc2")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
-                           name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    # [batch, num_rois * num_classes, out_number]
-    x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
-                               name=f"mrcnn_pointnet_{name}_fc3")(x)
-    return x
+    return p
 
 class CalcRotMatrix(KL.Layer):
     def __init__(self, config, **kwargs):
@@ -368,10 +380,11 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         rot = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "rot",
                                          9 * config.NUM_CLASSES, last_activation="tanh")
     else:
+        # [batch, num_rois, num_classes, 3]
         trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
                                            train_bn, "trans", 3,
                                            vector_size=config.POINTNET_VECTOR_SIZE)
-        # transform to [batch, num_rois, num_classes, 3, 1]
+        # transform to [batch, num_rois, num_classes, 1, 3, 1]
         trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
                             1, 3, 1), name="trans_reshape")(trans)
         pcl_list = KL.Lambda(lambda y: y[:, :, :, :, :3])(concat_point_cloud)

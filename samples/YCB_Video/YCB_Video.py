@@ -296,10 +296,10 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 2
-    TRAIN_ROIS_PER_IMAGE = 100
+    TRAIN_ROIS_PER_IMAGE = 200
     USE_DEPTH_AWARE_OPS = False
 
-    LEARNING_RATE = 0.01
+    LEARNING_RATE = 0.003
     GRADIENT_CLIP_NORM = 5.0
     ESTIMATE_6D_POSE = True
     POSE_ESTIMATION_METHOD = "pointnet"
@@ -777,7 +777,7 @@ if __name__ == '__main__':
         # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
         #                            ).with_node_names(show_name_regexes=['.*']).order_by('bytes').with_file_output("./output.txt").with_timeline_output("./timeline.json").build()
         # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
-        num += 1
+        num += 80
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
