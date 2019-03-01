@@ -35,7 +35,9 @@ import keras as k
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
+# MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "logs/ycbv20190228T1000/mask_rcnn_ycbv_0055.h5")
+
 DEBUG = False
 if DEBUG:
     import keras.backend as KB
@@ -58,8 +60,8 @@ print(os.path.join(ROOT_DIR, "samples/YCB_Video"))
 import samples.YCB_Video.YCB_Video as ycbv
 
 config = ycbv.YCBVConfig()
-DATASET_DIR = os.path.join(os.path.expanduser("~"), "Hitachi/YCB_Video_Dataset")  # TODO: enter value here
-
+# DATASET_DIR = os.path.join(os.path.expanduser("~"), "Hitachi/YCB_Video_Dataset")
+DATASET_DIR = os.path.join("/media/pohl", "Hitachi/YCB_Video_Dataset")
 
 # Override the training configurations with a few
 # changes for inferencing.
@@ -69,7 +71,7 @@ class InferenceConfig(config.__class__):
     IMAGES_PER_GPU = 1
     USE_DEPTH_AWARE_OPS = True
     POSE_ESTIMATION_METHOD = "pointnet"
-    POINTNET_VECTOR_SIZE = 1024
+    POINTNET_VECTOR_SIZE = 256
     TRAIN_ROIS_PER_IMAGE = 100
     # DETECTION_MIN_CONFIDENCE = 0.0
 
@@ -164,9 +166,11 @@ if TEST_MODE is "training":
         ("mrcnn_class", model.keras_model.get_layer("mrcnn_class").output),
         ("mrcnn_bbox", model.keras_model.get_layer("mrcnn_bbox").output),
         ("mrcnn_class_logits", model.keras_model.get_layer("mrcnn_class_logits").output),
+        ("mrcnn_mask", model.keras_model.get_layer("mrcnn_mask").output),
         ######## from function - build_fpn_pointnet_pose_graph ############
         ("pcl_list", model.keras_model.get_layer("FeaturePointCloud").output[0]),
         ("feature_list", model.keras_model.get_layer("FeaturePointCloud").output[1]),
+        ("masked_concat_pc", model.keras_model.get_layer("point_cloud_repr_concat").output),
         ("roi_align_pose_image", model.keras_model.get_layer("roi_align_pointnet_pose").output[0]),
         ("roi_align_pose_depth", model.keras_model.get_layer("roi_align_pointnet_pose").output[1]),
         ("expand_pcl_list", model.keras_model.get_layer("expand_pcl_list").output),
@@ -174,8 +178,8 @@ if TEST_MODE is "training":
         ("mrcnn_pose_feature_conv", model.keras_model.get_layer("mrcnn_pose_feature_conv").output),
         ("point_cloud_repr_concat", model.keras_model.get_layer("point_cloud_repr_concat").output),
         ("pose_conv1", model.keras_model.get_layer("mrcnn_pointnet_trans_conv1").output),
-        ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_trans_conv2").output),
-        ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_trans_conv3").output),
+        # ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_trans_conv2").output),
+        # ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_trans_conv3").output),
         ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").output),
         ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").output),
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").output),
@@ -245,8 +249,8 @@ if TEST_MODE is "training":
         ("mrcnn_pose_feature_conv", model.keras_model.get_layer("mrcnn_pose_feature_conv").weights),
         ("point_cloud_repr_concat", model.keras_model.get_layer("point_cloud_repr_concat").weights),
         ("pose_conv1", model.keras_model.get_layer("mrcnn_pointnet_trans_conv1").weights),
-        ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_trans_conv2").weights),
-        ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_trans_conv3").weights),
+        # ("pose_conv2", model.keras_model.get_layer("mrcnn_pointnet_trans_conv2").weights),
+        # ("pose_conv3", model.keras_model.get_layer("mrcnn_pointnet_trans_conv3").weights),
         ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").weights),
         ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").weights),
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").weights),
@@ -309,12 +313,25 @@ roi_scores = activations["mrcnn_class"][0, np.arange(roi_class_ids.shape[0]), ro
 roi_class_names = np.array(dataset.class_names)[roi_class_ids]
 roi_positive_ixs = np.where(roi_class_ids > 0)[0]
 
+# visualize mask branch output
+det_boxes = utils.denorm_boxes(detections[:, :4], image.shape[:2])
+det_mask_specific = np.array([activations["mrcnn_mask"][0, i, :, :, c]
+                              for i, c in enumerate(det_class_ids)])
+det_masks = np.array([utils.unmold_mask(m, det_boxes[i], image.shape)
+                      for i, m in enumerate(det_mask_specific)])
+colors = visualize.random_colors(len(np.unique(det_class_ids)))
+masked_ims = [visualize.apply_mask(image[:, :, :3], det_masks[i], color=colors[np.where(det_class_ids[i] == np.unique(det_class_ids))[0][0]]) for i in range(det_count)]
+visualize.display_images(masked_ims[:4])
+visualize.display_images(det_masks[:4] * 255, cmap="Blues", interpolation="none")
+
+
+
 # TODO: I'm not sure if roi_scores[:det_count] is the same as detections[:, 5]
 captions = ["{} {:.3f}".format(dataset.class_names[int(c)], s) if c > 0 else ""
             for c, s in zip(det_class_ids, roi_scores[:det_count])]
 visualize.draw_boxes(
     image[:, :, :3],
-    refined_boxes=utils.denorm_boxes(detections[:, :4], image.shape[:2]),
+    refined_boxes=det_boxes,
     visibilities=[2] * len(detections), title="Detections", captions=captions,
     ax=get_ax())
 
@@ -341,9 +358,22 @@ camera.intrinsic_matrix = intrinsic_matrix
 # camera = o3d.PinholeCameraIntrinsic(
 #     o3d.PinholeCameraIntrinsicParameters.Kinect2DepthCameraDefault)
 pcd = o3d.create_point_cloud_from_rgbd_image(rgbd_im, camera)
+
+masked_pc = np.array([activations["masked_concat_pc"][0, i, c, :, :3]
+                              for i, c in enumerate(det_class_ids)])
+masked_pc_list = []
+for i in range(det_count):
+    pc = masked_pc[i].reshape((100, 3))
+    c = np.ones_like(pc) * colors[np.where(det_class_ids[i] == np.unique(det_class_ids))[0][0]]
+    mpc = o3d.PointCloud()
+    mpc.points = o3d.Vector3dVector(pc)
+    mpc.colors = o3d.Vector3dVector(c)
+    masked_pc_list.append(mpc)
+o3d.draw_geometries(masked_pc_list + [pcd])
 # pred_pc = o3d.PointCloud()
 # pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
-# o3d.draw_geometries([roi_pc, pcd])
+o3d.draw_geometries([roi_pc, pcd])
+
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
     df = np.array(pkl.load(f), dtype=np.float32)
@@ -451,36 +481,36 @@ visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class
 
 
 ##### Check correctness of CalcRotMatrix
-r_m = np.transpose(activations["rot_reshape"], [0, 1, 4, 3, 2])
-x_1 = r_m[:, :, :, 0, :]
-x_2 = r_m[:, :, :, 1, :]
-x_1 /= np.expand_dims(np.sqrt(np.sum(np.square(x_1), axis=3)), axis=-1)
-x_2 /= np.expand_dims(np.sqrt(np.sum(np.square(x_2), axis=3)), axis=-1)
-x_3 = np.cross(x_1, x_2)
-np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_1), axis=3)),
-                           np.ones((1, 100, 22)), rtol=1e-5)
-np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_2), axis=3)),
-                           np.ones((1, 100, 22)), rtol=1e-5)
-exceptions = []
-# TODO:
-# This fails for certain classes (but then for each roi) with slightly different rotations
-# Not sure if this is due to numerical issues because the differences are usually
-# of the scale 1e-3
-for i in range(100):
-    for j in range(22):
-        a = x_1[0, i, j]
-        b = x_2[0, i, j]
-        v = x_3[0, i, j]
-        c = np.dot(a, b)
-        v_cross = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]], dtype=np.float32)
-        I = np.eye(3, dtype=np.float32)
-        factor = 1 / (1 + c)
-        rot = I + v_cross + np.dot(v_cross, v_cross) * factor
-        rot_network = activations["calcrotmatrix"][0, i, :, :, j]
-        try:
-            np.testing.assert_allclose(rot.astype(np.float32), rot_network, atol=1e-5)
-        except AssertionError:
-            exceptions.append((i, j))
+# r_m = np.transpose(activations["rot_reshape"], [0, 1, 4, 3, 2])
+# x_1 = r_m[:, :, :, 0, :]
+# x_2 = r_m[:, :, :, 1, :]
+# x_1 /= np.expand_dims(np.sqrt(np.sum(np.square(x_1), axis=3)), axis=-1)
+# x_2 /= np.expand_dims(np.sqrt(np.sum(np.square(x_2), axis=3)), axis=-1)
+# x_3 = np.cross(x_1, x_2)
+# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_1), axis=3)),
+#                            np.ones((1, 100, 22)), rtol=1e-5)
+# np.testing.assert_allclose(np.sqrt(np.sum(np.square(x_2), axis=3)),
+#                            np.ones((1, 100, 22)), rtol=1e-5)
+# exceptions = []
+# # TODO:
+# # This fails for certain classes (but then for each roi) with slightly different rotations
+# # Not sure if this is due to numerical issues because the differences are usually
+# # of the scale 1e-3
+# for i in range(100):
+#     for j in range(22):
+#         a = x_1[0, i, j]
+#         b = x_2[0, i, j]
+#         v = x_3[0, i, j]
+#         c = np.dot(a, b)
+#         v_cross = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]], dtype=np.float32)
+#         I = np.eye(3, dtype=np.float32)
+#         factor = 1 / (1 + c)
+#         rot = I + v_cross + np.dot(v_cross, v_cross) * factor
+#         rot_network = activations["calcrotmatrix"][0, i, :, :, j]
+#         try:
+#             np.testing.assert_allclose(rot.astype(np.float32), rot_network, atol=1e-5)
+#         except AssertionError:
+#             exceptions.append((i, j))
 
 
 

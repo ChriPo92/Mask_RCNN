@@ -777,10 +777,31 @@ if __name__ == '__main__':
         # opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
         #                            ).with_node_names(show_name_regexes=['.*']).order_by('bytes').with_file_output("./output.txt").with_timeline_output("./timeline.json").build()
         # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
-        num += 80
+        num += 20
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
+                    epochs=num,
+                    layers=layers,
+                    augmentation=augmentation)
+        num += 20
+        layers = "heads"
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE / 3.,
+                    epochs=num,
+                    layers=layers,
+                    augmentation=augmentation)
+        num += 20
+        layers = "heads"
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE / 6.,
+                    epochs=num,
+                    layers=layers,
+                    augmentation=augmentation)
+        num += 20
+        layers = "heads"
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE / 30.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
