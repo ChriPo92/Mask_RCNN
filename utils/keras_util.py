@@ -996,7 +996,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
 
     # Classifier head
     shared_shape = K.int_shape(shared)
-    shared = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0] * shared_shape[1], shared_shape[2])))(shared)
+    shared = KL.Lambda(lambda y: tf.reshape(y, (-1, shared_shape[2])))(shared)
     mrcnn_class_logits = KL.Dense(num_classes,
                                             name='mrcnn_class_logits')(shared)
     mrcnn_class_logits = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0],
