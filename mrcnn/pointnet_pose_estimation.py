@@ -183,22 +183,31 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
                      name=f"mrcnn_{name}_sym_max_pool")(x)
     # transform to [batch, num_classes, num_rois, vector_size]
     # and transpose to [batch, num_rois, num_classes, vector_size]
-    x = KL.Lambda(lambda y: tf.transpose(tf.reshape(y, (config.BATCH_SIZE, config.NUM_CLASSES, -1, vector_size)), [0, 2, 1, 3]))(x)
-    # transform to [batch, num_rois, num_classes, 256]
-    x = KL.TimeDistributed(KL.Dense(256),
+    x = KL.Lambda(lambda y: tf.transpose(tf.reshape(y, (config.BATCH_SIZE,
+                                                        config.NUM_CLASSES,
+                                                        config.TRAIN_ROIS_PER_IMAGE,
+                                                        vector_size)), [0, 2, 1, 3]))(x)
+    # transform to [batch * num_rois, num_classes, vector_size] so that all classes have their own weigths,
+    # but all rois have the same weights
+    x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
+                                           config.NUM_CLASSES, vector_size)))(x)
+    # transform to [batch * num_rois, num_classes, 256]
+    x = KL.Dense(256,
                  name=f"mrcnn_pointnet_{name}_fc1")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
+    x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch, num_rois, num_classes, 128]
-    x = KL.TimeDistributed(KL.Dense(128),
+    x = KL.Dense(128,
                  name=f"mrcnn_pointnet_{name}_fc2")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
+    x = KL.BatchNormalization(
         name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # [batch, num_rois, num_classes, out_number]
-    x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
+    x = KL.Dense(out_number, activation=last_activation,
                  name=f"mrcnn_pointnet_{name}_fc3")(x)
+    x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
+                                           config.NUM_CLASSES, out_number)))(x)
     return x
 
 class CalcRotMatrix(KL.Layer):
