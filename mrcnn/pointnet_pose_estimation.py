@@ -147,11 +147,12 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # partial_point_cloud = KL.Lambda(lambda y: y[:, :, j, :, :])(point_cloud_tensor)
     # transpose to [batch, num_classes, num_points, num_rois, 7, 1] and reshape to [batch, num_classes, num_points, num_rois * 7, 1]
     partial_point_cloud = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 3, 1, 4, 5]),
-                                                         (config.BATCH_SIZE, config.NUM_CLASSES, num_points, -1, 1)))(point_cloud_tensor)
-    # transform to [batch, num_classes, num_points, num_rois, 64]
-    x = KL.TimeDistributed(KL.Conv2D(64, (1, 7), strides=(1, 7), padding="valid"),
+                                                         (config.BATCH_SIZE * config.NUM_CLASSES, num_points,
+                                                          config.TRAIN_ROIS_PER_IMAGE * 7, 1)))(point_cloud_tensor)
+    # transform to [batch * num_classes, num_points, num_rois, 64]
+    x = KL.Conv2D(64, (1, 7), strides=(1, 7), padding="valid",
                            name=f"mrcnn_pointnet_{name}_conv1")(partial_point_cloud)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
+    x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # # transform to [batch, num_rois * num_classes, num_points, 4, 32]
@@ -166,23 +167,23 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     #
     # x = KL.Activation('relu')(x)
     # transform to [batch, num_classes, num_points, num_rois, 128]
-    x = KL.TimeDistributed(KL.Conv2D(128, (1, 1), padding="valid"),
+    x = KL.Conv2D(128, (1, 1), padding="valid",
                   name=f"mrcnn_pointnet_{name}_conv4")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
+    x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch, num_classes, num_points, num_rois, vector_size]
-    x = KL.TimeDistributed(KL.Conv2D(vector_size, (1, 1), padding="valid"),
+    x = KL.Conv2D(vector_size, (1, 1), padding="valid",
                   name=f"mrcnn_pointnet_{name}_conv5")(x)
-    x = KL.TimeDistributed(KL.BatchNormalization(),
+    x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn5')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch, num_classes, 1, num_rois, vector_size]
-    x = KL.TimeDistributed(KL.MaxPool2D((num_points, 1), padding="valid"),
+    x = KL.MaxPool2D((num_points, 1), padding="valid",
                      name=f"mrcnn_{name}_sym_max_pool")(x)
     # transform to [batch, num_classes, num_rois, vector_size]
     # and transpose to [batch, num_rois, num_classes, vector_size]
-    x = KL.Lambda(lambda y: tf.transpose(tf.squeeze(y, axis=[2]), [0, 2, 1, 3]))(x)
+    x = KL.Lambda(lambda y: tf.transpose(tf.reshape(y, (config.BATCH_SIZE, config.NUM_CLASSES, -1, vector_size)), [0, 2, 1, 3]))(x)
     # transform to [batch, num_rois, num_classes, 256]
     x = KL.TimeDistributed(KL.Dense(256),
                  name=f"mrcnn_pointnet_{name}_fc1")(x)
