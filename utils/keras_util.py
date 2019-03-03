@@ -995,18 +995,23 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                        name="pool_squeeze")(x)
 
     # Classifier head
-    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
+    shared_shape = K.int_shape(shared)
+    shared = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0] * shared_shape[1], shared_shape[2])))(shared)
+    mrcnn_class_logits = KL.Dense(num_classes,
                                             name='mrcnn_class_logits')(shared)
-    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
+    mrcnn_class_logits = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0],
+                                                            shared_shape[1],
+                                                            num_classes)))(mrcnn_class_logits)
+    mrcnn_probs = KL.Activation("softmax",
                                      name="mrcnn_class")(mrcnn_class_logits)
-
     # BBox head
     # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
-    x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
+    x = KL.Dense(num_classes * 4, activation='linear',
                            name='mrcnn_bbox_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
-    s = K.int_shape(x)
-    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
+    mrcnn_bbox = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0],
+                                                    shared_shape[1],
+                                                    num_classes, 4)), name="mrcnn_bbox")(x)
 
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 

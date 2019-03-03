@@ -231,7 +231,9 @@ class Config(object):
         """Set values of computed attributes."""
         # Effective batch size
         self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
-
+        # for some reason they thought it was a good idea to change the parameter
+        # name for the number of rois between training and inference
+        self.DETECTION_MAX_INSTANCES = self.TRAIN_ROIS_PER_IMAGE
         # Input image size
         if self.IMAGE_RESIZE_MODE == "crop":
             self.IMAGE_SHAPE = np.array([self.IMAGE_MIN_DIM, self.IMAGE_MIN_DIM,
