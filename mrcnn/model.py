@@ -270,7 +270,7 @@ class MaskRCNN():
                 ku.fpn_classifier_graph(rois, mrcnn_feature_maps, input_image_meta,
                                      config.POOL_SIZE, config.NUM_CLASSES,
                                      train_bn=config.TRAIN_BN,
-                                     fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+                                     fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE, config=config)
 
             mrcnn_mask = ku.build_fpn_mask_graph(rois, mrcnn_feature_maps,
                                               input_image_meta,

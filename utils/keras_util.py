@@ -956,7 +956,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 ############################################################
 
 def fpn_classifier_graph(rois, feature_maps, image_meta,
-                         pool_size, num_classes, train_bn=True,
+                         pool_size, num_classes, config, train_bn=True,
                          fc_layers_size=1024):
     """Builds the computation graph of the feature pyramid network classifier
     and regressor heads.
@@ -995,12 +995,12 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                        name="pool_squeeze")(x)
 
     # Classifier head
-    shared_shape = K.int_shape(shared)
-    shared = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0] * shared_shape[1], shared_shape[2])))(shared)
+    shared = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
+                                                fc_layers_size)))(shared)
     mrcnn_class_logits = KL.Dense(num_classes,
                                             name='mrcnn_class_logits')(shared)
-    mrcnn_class_logits = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0],
-                                                            shared_shape[1],
+    mrcnn_class_logits = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE,
+                                                            config.TRAIN_ROIS_PER_IMAGE,
                                                             num_classes)))(mrcnn_class_logits)
     mrcnn_probs = KL.Activation("softmax",
                                      name="mrcnn_class")(mrcnn_class_logits)
@@ -1009,8 +1009,8 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     x = KL.Dense(num_classes * 4, activation='linear',
                            name='mrcnn_bbox_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
-    mrcnn_bbox = KL.Lambda(lambda y: tf.reshape(y, (shared_shape[0],
-                                                    shared_shape[1],
+    mrcnn_bbox = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE,
+                                                    config.TRAIN_ROIS_PER_IMAGE,
                                                     num_classes, 4)), name="mrcnn_bbox")(x)
 
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
