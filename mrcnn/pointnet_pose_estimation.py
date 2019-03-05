@@ -1,9 +1,14 @@
 import keras.layers as KL
 import keras.engine as KE
+import keras.initializers as KI
+import keras.regularizers as KR
 import tensorflow as tf
 
 from utils import utils, keras_util, tf_util
-from utils.pointnet_util import pointnet_sa_module_msg, pointnet_sa_module, pointnet_fp_module
+from tf_ops.sampling.tf_sampling import farthest_point_sample, gather_point
+from tf_ops.grouping.tf_grouping import query_ball_point, group_point, knn_point
+from tf_ops.interpolation.tf_interpolate import three_nn, three_interpolate
+from utils.pointnet_util import sample_and_group, sample_and_group_all, pointnet_sa_module, pointnet_fp_module
 
 class FeaturePointCloud(KE.Layer):
 
@@ -120,7 +125,7 @@ class FeaturePointCloud(KE.Layer):
         return output_shape
 
 def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
-                               name, out_number, last_activation="linear", vector_size=1024):
+                               name, in_features, out_number, last_activation="linear", vector_size=1024):
     """
 
     :param point_cloud_tensor: [batch, num_rois, classes, num_points, 7, 1]
@@ -148,9 +153,9 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # transpose to [batch, num_classes, num_points, num_rois, 7, 1] and reshape to [batch, num_classes, num_points, num_rois * 7, 1]
     partial_point_cloud = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 3, 1, 4, 5]),
                                                          (config.BATCH_SIZE * config.NUM_CLASSES, num_points,
-                                                          config.TRAIN_ROIS_PER_IMAGE * 7, 1)))(point_cloud_tensor)
+                                                          config.TRAIN_ROIS_PER_IMAGE * in_features, 1)))(point_cloud_tensor)
     # transform to [batch * num_classes, num_points, num_rois, 64]
-    x = KL.Conv2D(64, (1, 7), strides=(1, 7), padding="valid",
+    x = KL.Conv2D(64, (1, in_features), strides=(1, in_features), padding="valid",
                            name=f"mrcnn_pointnet_{name}_conv1")(partial_point_cloud)
     x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn1')(x, training=train_bn)
@@ -395,31 +400,43 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
     pcl_list = KL.Lambda(lambda y: tf.expand_dims(y, -1), name="expand_pcl_list")(pcl_list)
     # expand to [batch, num_rois, h*w, channels, 1]
     feature_list = KL.Lambda(lambda y: tf.expand_dims(y, -1), name="expand_feature_list")(feature_list)
-    # transform to [batch, num_rois, h*w, 4, 1]
-    feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, int(config.TOP_DOWN_PYRAMID_SIZE / 4)),
-                                                padding="valid",
-                                                strides=(1, int(config.TOP_DOWN_PYRAMID_SIZE / 4))),
-                                      name="mrcnn_pose_feature_conv")(feature_list)
-    feature_list = KL.TimeDistributed(KL.BatchNormalization(),
-                                      name='mrcnn_pose_feature_bn')(feature_list, training=train_bn)
-    feature_list = KL.Activation('relu')(feature_list)
+    if config.POSE_ESTIMATION_METHOD is "pointnet":
+        # transform to [batch, num_rois, h*w, 4, 1]
+        feature_list = KL.TimeDistributed(KL.Conv2D(1, (1, int(config.TOP_DOWN_PYRAMID_SIZE / 4)),
+                                                    padding="valid",
+                                                    strides=(1, int(config.TOP_DOWN_PYRAMID_SIZE / 4))),
+                                          name="mrcnn_pose_feature_conv")(feature_list)
+        feature_list = KL.TimeDistributed(KL.BatchNormalization(),
+                                          name='mrcnn_pose_feature_bn')(feature_list, training=train_bn)
+        feature_list = KL.Activation('relu')(feature_list)
     # merge to [batch, num_rois, num_classes, num_points, 7, 1]
     concat_point_cloud = SamplePointsFromMaskedRegion(num_points,
                                                       name="point_cloud_repr_concat")([pcl_list, feature_list, masks])
     # concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
     #                              name="point_cloud_repr_concat")([pcl_list, feature_list])
     if config.POSE_ESTIMATION_METHOD is "pointnet2":
-        assert False
+        # assert False
+        # [batch, num_rois, num_classes, num_points, 131, 1]
         concat_point_cloud = build_PointNet2_Feature_Graph(concat_point_cloud,
-                                                           train_bn, 0.5)
-        trans = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "trans",
-                                         3 * config.NUM_CLASSES)
-        rot = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                         6 * config.NUM_CLASSES, last_activation="tanh")
+                                                           train_bn, 0.5, num_points, config.TOP_DOWN_PYRAMID_SIZE, config)
+        trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
+                                           train_bn, "trans", 131, 3,
+                                           vector_size=config.POINTNET_VECTOR_SIZE)
+        trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
+                            1, 3, 1), name="trans_preshape")(trans)
+        pcl_list = KL.Lambda(lambda y: y[:, :, :, :, :3])(concat_point_cloud)
+        feature_list = KL.Lambda(lambda y: y[:, :, :, :, 3:])(concat_point_cloud)
+        pcl_list = KL.Subtract()([pcl_list, trans])
+        concat_point_cloud = KL.Lambda(lambda y: tf.stop_gradient(tf.concat(y, axis=-2)),
+                                       name="centered_concat_point_clouds")([pcl_list, feature_list])
+        rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
+                                         train_bn, "rot", 131, 6,
+                                         last_activation="tanh",
+                                         vector_size=config.POINTNET_VECTOR_SIZE)
     else:
         # [batch, num_rois, num_classes, 3]
         trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
-                                           train_bn, "trans", 3,
+                                           train_bn, "trans", 7, 3,
                                            vector_size=config.POINTNET_VECTOR_SIZE)
         # transform to [batch, num_rois, num_classes, 1, 3, 1]
         trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
@@ -430,7 +447,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         concat_point_cloud = KL.Lambda(lambda y: tf.stop_gradient(tf.concat(y, axis=-2)),
                                        name="centered_concat_point_clouds")([pcl_list, feature_list])
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
-                                         train_bn, "rot", 6,
+                                         train_bn, "rot", 7, 6,
                                          last_activation="tanh",
                                          vector_size=config.POINTNET_VECTOR_SIZE)
 
@@ -464,10 +481,10 @@ class MultiScaleGroupingSetAbstractionLayer(KL.Layer):
         self.nsample_list = nsample_list
         self.mlp_list = mlp_list
         self.is_training = is_training
-        self.bn_decay = bn_decay
+        # self.bn_decay = bn_decay
         self.bn = bn
         self.use_xyz = use_xyz
-        self.use_nchw = use_nchw
+        # self.use_nchw = use_nchw
 
     def call(self, inputs, **kwargs):
         """
@@ -482,12 +499,69 @@ class MultiScaleGroupingSetAbstractionLayer(KL.Layer):
         """
         xyz = tf.slice(inputs, [0, 0, 0], [-1, -1, 3])
         points = tf.slice(inputs, [0, 0, 3], [-1, -1, -1])
-        l_xyz, l_points = pointnet_sa_module_msg(xyz, points, npoint=self.npoint,
-                               radius_list=self.radius_list, nsample_list=self.nsample_list,
-                               mlp_list=self.mlp_list, is_training=self.is_training,
-                               bn_decay=self.bn_decay, bn=self.bn, use_xyz=self.use_xyz,
-                               use_nchw=self.use_nchw, scope=self.name)
-        return tf.concat([l_xyz, l_points], axis=-1)
+        # [batch, npoint, 3]
+        new_xyz = gather_point(xyz, farthest_point_sample(self.npoint, xyz))
+        new_points_list = []
+        for i in range(len(self.radius_list)):
+            radius = self.radius_list[i]
+            nsample = self.nsample_list[i]
+            # [batch, npoint, nsample] , [batch, npoint]
+            idx, pts_cnt = query_ball_point(radius, nsample, xyz, new_xyz)
+            # [batch, npoint, nsample, 3]
+            grouped_xyz = group_point(xyz, idx)
+            grouped_xyz -= tf.tile(tf.expand_dims(new_xyz, 2), [1, 1, nsample, 1])
+            if points is not None:
+                # [batch, npoint, nsample, channels]
+                grouped_points = group_point(points, idx)
+                if self.use_xyz:
+                    # [batch, npoint, nsample, 3 + channels]
+                    grouped_points = tf.concat([grouped_points, grouped_xyz], axis=-1)
+            else:
+                # [batch, npoint, nsample, 3]
+                grouped_points = grouped_xyz
+            # if self.use_nchw:
+            #     # [batch, 3, npoint, nsample]
+            #     grouped_points = tf.transpose(grouped_points, [0, 3, 1, 2])
+            for j, num_out_channel in enumerate(self.mlp_list[i]):
+                grouped_points = tf.nn.conv2d(grouped_points, self.kernel[i][j],
+                                              strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
+                grouped_points = tf.nn.bias_add(grouped_points, self.bias[i][j], data_format="NHWC")
+                if self.bn:
+                    grouped_points = KL.BatchNormalization(center=True, scale=True)(inputs=grouped_points,
+                                                                                    training=self.is_training)
+                grouped_points = tf.nn.relu(grouped_points)
+                # grouped_points = tf_util.conv2d(grouped_points, num_out_channel, [1, 1],
+                #                                 padding='VALID', stride=[1, 1], bn=self.bn, is_training=self.is_training,
+                #                                 scope='conv%d_%d' % (i, j), bn_decay=self.bn_decay)
+            # if self.use_nchw: grouped_points = tf.transpose(grouped_points, [0, 2, 3, 1])
+            new_points = tf.reduce_max(grouped_points, axis=[2])
+            new_points_list.append(new_points)
+        new_points_concat = tf.concat(new_points_list, axis=-1)
+        return tf.concat([new_xyz, new_points_concat], axis=-1)
+
+    def build(self, input_shape):
+        xavier_init = KI.glorot_uniform()
+        zero_init = KI.zeros()
+        regularizer = KR.l2()
+        self.kernel = []
+        self.bias = []
+        for i in range(len(self.radius_list)):
+            num_in_channels = input_shape[-1] if self.use_xyz else input_shape[-1] - 3
+            kernels = []
+            bias = []
+            for j, num_out_channel in enumerate(self.mlp_list[i]):
+                kernel_shape = [1, 1, num_in_channels, num_out_channel]
+                bias_shape = [num_out_channel]
+                k = self.add_weight(name="kernel", shape=kernel_shape, dtype=tf.float32,
+                                    initializer=xavier_init, regularizer=regularizer, trainable=True)
+                b = self.add_weight(name="bias", shape=bias_shape, dtype=tf.float32,
+                                    initializer=zero_init, regularizer=None,
+                                    trainable=True)
+                kernels.append(k)
+                bias.append(b)
+                num_in_channels = num_out_channel
+            self.kernel.append(kernels)
+            self.bias.append(bias)
 
     def compute_output_shape(self, input_shape):
         batch = input_shape[0]
@@ -495,6 +569,7 @@ class MultiScaleGroupingSetAbstractionLayer(KL.Layer):
         for l in self.mlp_list:
             channels += l[-1]
         return (batch, self.npoint, 3 + channels)
+
 
 class SetAbstractionLayer(KL.Layer):
     def __init__(self, npoint, radius, nsample, mlp, mlp2,
@@ -506,7 +581,7 @@ class SetAbstractionLayer(KL.Layer):
         self.radius = radius
         self.nsample = nsample
         self.mlp = mlp
-        self.mlp2 = mlp2
+        # self.mlp2 = mlp2
         self.group_all = group_all
         self.is_training = is_training
         self.bn_decay = bn_decay
@@ -519,21 +594,90 @@ class SetAbstractionLayer(KL.Layer):
     def call(self, inputs, **kwargs):
         xyz = tf.slice(inputs, [0, 0, 0], [-1, -1, 3])
         points = tf.slice(inputs, [0, 0, 3], [-1, -1, -1])
-        l_xyz, l_points, _ = pointnet_sa_module(xyz, points, npoint=self.npoint,
-                                             radius=self.radius, nsample=self.nsample,
-                                             mlp=self.mlp, mlp2=self.mlp2,
-                                             group_all=self.group_all,
-                                             is_training=self.is_training,
-                                             bn_decay=self.bn_decay, scope=self.name,
-                                             bn=self.bn, pooling=self.pooling,
-                                             knn=self.knn, use_xyz=self.use_xyz,
-                                             use_nchw=self.use_nchw)
-        return tf.concat([l_xyz, l_points], axis=-1)
+        # Sample and Grouping
+        if self.group_all:
+            # [batch, 1, 3], [batch, 1, ndata, 3 + channel],
+            # [batch, 1, ndata], [batch, 1, ndata, 3]
+            new_xyz, new_points, idx, grouped_xyz = sample_and_group_all(xyz, points, self.use_xyz)
+        else:
+            # [batch, npoint, 3], [batch, npoint, nsample, 3 + channel],
+            # [batch, npoint, nsample], [batch, npoint, nsample, 3]
+            new_xyz, new_points, idx, grouped_xyz = sample_and_group(self.npoint,
+                                                                     self.radius,
+                                                                     self.nsample,
+                                                                     xyz, points,
+                                                                     self.knn, self.use_xyz)
+
+        # Point Feature Embedding
+        if self.use_nchw: new_points = tf.transpose(new_points, [0, 3, 1, 2])
+        for i, num_out_channel in enumerate(self.mlp):
+            new_points = tf.nn.conv2d(new_points, self.kernel[i],
+                                          strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
+            new_points = tf.nn.bias_add(new_points, self.bias[i], data_format="NHWC")
+            if self.bn:
+                new_points = KL.BatchNormalization(center=True, scale=True)(inputs=new_points,
+                                                                            training=self.is_training)
+            new_points = tf.nn.relu(new_points)
+        if self.use_nchw: new_points = tf.transpose(new_points, [0, 2, 3, 1])
+
+        # Pooling in Local Regions
+        if self.pooling == 'max':
+            new_points = tf.reduce_max(new_points, axis=[2], keepdims=True, name='maxpool')
+        elif self.pooling == 'avg':
+            new_points = tf.reduce_mean(new_points, axis=[2], keepdims=True, name='avgpool')
+        elif self.pooling == 'weighted_avg':
+            with tf.variable_scope('weighted_avg'):
+                dists = tf.norm(grouped_xyz, axis=-1, ord=2, keepdims=True)
+                exp_dists = tf.exp(-dists * 5)
+                weights = exp_dists / tf.reduce_sum(exp_dists, axis=2,
+                                                    keepdims=True)  # (batch_size, npoint, nsample, 1)
+                new_points *= weights  # (batch_size, npoint, nsample, mlp[-1])
+                new_points = tf.reduce_sum(new_points, axis=2, keepdims=True)
+        elif self.pooling == 'max_and_avg':
+            max_points = tf.reduce_max(new_points, axis=[2], keepdims=True, name='maxpool')
+            avg_points = tf.reduce_mean(new_points, axis=[2], keepdims=True, name='avgpool')
+            new_points = tf.concat([avg_points, max_points], axis=-1)
+
+        # [Optional] Further Processing
+        # if self.mlp2 is not None:
+        #     if self.use_nchw: new_points = tf.transpose(new_points, [0, 3, 1, 2])
+        #     for i, num_out_channel in enumerate(self.mlp2):
+        #         new_points = tf_util.conv2d(new_points, num_out_channel, [1, 1],
+        #                                     padding='VALID', stride=[1, 1],
+        #                                     bn=bn, is_training=is_training,
+        #                                     scope='conv_post_%d' % (i), bn_decay=bn_decay,
+        #                                     data_format=data_format)
+        #     if self.use_nchw: new_points = tf.transpose(new_points, [0, 2, 3, 1])
+
+        new_points = tf.squeeze(new_points, [2])  # (batch_size, npoints, mlp2[-1])
+        return tf.concat([new_xyz, new_points], axis=-1)
+
+    def build(self, input_shape):
+        xavier_init = KI.glorot_uniform()
+        zero_init = KI.zeros()
+        regularizer = KR.l2()
+        num_in_channels = input_shape[-1]
+        self.kernel = []
+        self.bias = []
+        for i, num_out_channel in enumerate(self.mlp):
+            kernel_shape = [1, 1, num_in_channels, num_out_channel]
+            bias_shape = [num_out_channel]
+            k = self.add_weight(name="kernel", shape=kernel_shape, dtype=tf.float32,
+                                initializer=xavier_init, regularizer=regularizer, trainable=True)
+            b = self.add_weight(name="bias", shape=bias_shape, dtype=tf.float32,
+                                initializer=zero_init, regularizer=None,
+                                trainable=True)
+            self.kernel.append(k)
+            self.bias.append(b)
+            num_in_channels = num_out_channel
 
     def compute_output_shape(self, input_shape):
         batch = input_shape[0]
-        channels = self.mlp2[-1] if self.mlp2 is not None else self.mlp[-1]
-        return (batch, self.npoint, 3 + channels)
+        # channels = self.mlp2[-1] if self.mlp2 is not None else self.mlp[-1]
+        channels = self.mlp[-1]
+        npoints = self.npoint if not self.group_all else 1
+        return (batch, npoints, 3 + channels)
+
 
 class FeaturePropagationLayer(KL.Layer):
     def __init__(self, mlp, is_training, bn_decay, bn=True, **kwargs):
@@ -544,60 +688,121 @@ class FeaturePropagationLayer(KL.Layer):
         self.bn = bn
 
     def call(self, inputs, **kwargs):
-        xyz1 = tf.slice(inputs[0], [0, 0, 0, 0], [-1, -1, -1, 3])
-        points1 = tf.slice(inputs[0], [0, 0, 0, 3], [-1, -1, -1, -1])
-        xyz2 = tf.slice(inputs[1], [0, 0, 0, 0], [-1, -1, -1, 3])
-        points2 = tf.slice(inputs[1], [0, 0, 0, 3], [-1, -1, -1, -1])
+        # [batch, ndata, 3]
+        xyz1 = tf.slice(inputs[0], [0, 0, 0], [-1, -1, 3])
+        # [batch, ndata, nchannels]
+        points1 = tf.slice(inputs[0], [0, 0, 3], [-1, -1, -1])
+        # [batch, mdata, 3]
+        xyz2 = tf.slice(inputs[1], [0, 0, 0], [-1, -1, 3])
+        # [batch, mdata, mchannels]
+        points2 = tf.slice(inputs[1], [0, 0, 3], [-1, -1, -1])
         num_rois = xyz1.get_shape()[1]
-        points = []
-        for i in range(num_rois):
-            new_points = pointnet_fp_module(xyz1[:, i, :, :], xyz2[:, i, :, :], points1[:, i, :, :], points2[:, i, :, :],
-                                            mlp=self.mlp, is_training=self.is_training,
-                                            bn_decay=self.bn_decay, scope=self.name+f"_{i}", bn=self.bn)
-            points.append(new_points)
-        return tf.concat([xyz1, tf.stack(points, axis=1)], axis=-1)
+        # [batch, ndata, 3], [batch, ndata, 3]
+        dist, idx = three_nn(xyz1, xyz2)
+        dist = tf.maximum(dist, 1e-10)
+        norm = tf.reduce_sum((1.0 / dist), axis=2, keepdims=True)
+        norm = tf.tile(norm, [1, 1, 3])
+        weight = (1.0 / dist) / norm
+        # [batch, ndata, mchannels]
+        interpolated_points = three_interpolate(points2, idx, weight)
+
+        if points1 is not None:
+            # [batch, ndata, nchannel + mchannel]
+            new_points1 = tf.concat(axis=2, values=[interpolated_points, points1])
+        else:
+            new_points1 = interpolated_points
+        new_points1 = tf.expand_dims(new_points1, 2)
+        for i, num_out_channel in enumerate(self.mlp):
+            new_points1 = tf.nn.conv2d(new_points1, self.kernel[i],
+                                      strides=[1, 1, 1, 1], padding="VALID", data_format="NHWC")
+            new_points1 = tf.nn.bias_add(new_points1, self.bias[i], data_format="NHWC")
+            if self.bn:
+                new_points1 = KL.BatchNormalization(center=True, scale=True)(inputs=new_points1,
+                                                                             training=self.is_training)
+            new_points1 = tf.nn.relu(new_points1)
+        new_points1 = tf.squeeze(new_points1, [2])  # B,ndataset1,mlp[-1]
+        # points = []
+        # for i in range(num_rois):
+        #
+        #     new_points = pointnet_fp_module(xyz1[:, i, :, :], xyz2[:, i, :, :], points1[:, i, :, :], points2[:, i, :, :],
+        #                                     mlp=self.mlp, is_training=self.is_training,
+        #                                     bn_decay=self.bn_decay, scope=self.name+f"_{i}", bn=self.bn)
+        #     points.append(new_points)
+        return tf.concat([xyz1, new_points1], axis=-1)
+
+    def build(self, input_shape):
+        xavier_init = KI.glorot_uniform()
+        zero_init = KI.zeros()
+        regularizer = KR.l2()
+        # nchannel + mchannel (without 2*xyz)
+        num_in_channels = input_shape[0][-1] + input_shape[1][-1] - 6
+        self.kernel = []
+        self.bias = []
+        for i, num_out_channel in enumerate(self.mlp):
+            kernel_shape = [1, 1, num_in_channels, num_out_channel]
+            bias_shape = [num_out_channel]
+            k = self.add_weight(name="kernel", shape=kernel_shape, dtype=tf.float32,
+                                initializer=xavier_init, regularizer=regularizer, trainable=True)
+            b = self.add_weight(name="bias", shape=bias_shape, dtype=tf.float32,
+                                initializer=zero_init, regularizer=None,
+                                trainable=True)
+            self.kernel.append(k)
+            self.bias.append(b)
+            num_in_channels = num_out_channel
 
     def compute_output_shape(self, input_shape):
         xyz1_shape = input_shape[0]
-        return (xyz1_shape[0], xyz1_shape[1], xyz1_shape[2], 3 + self.mlp[-1])
+        return (xyz1_shape[0], xyz1_shape[1], 3 + self.mlp[-1])
 
 
-def build_PointNet2_Feature_Graph(concat_points, is_training, bn_decay):
+def build_PointNet2_Feature_Graph(concat_points, is_training, bn_decay, num_points, num_features, config):
     # Set abstraction layers
-    # [batch, num_rois, pool_size², 7, 1]
-    concat_points = KL.Lambda(lambda y: tf.squeeze(y, axis=-1))(concat_points)
-    # [batch, num_rois, 128, 323] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 320]
-    l1_concat = KL.TimeDistributed(MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
-                                                              [32, 64, 128],
-                                                              [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
-                                                              is_training, bn_decay,
-                                                              name='msg_layer1'))(concat_points)
-    # [batch, num_rois, 32, 643] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 640]
-    l2_concat = KL.TimeDistributed(MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
-                                                              [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
-                                                              is_training, bn_decay,
-                                                              name='msg_layer2'))(l1_concat)
-    # [batch, num_rois, 1, 1027] = [batch, num_rois, 1, 3] + [batch, num_rois, 1, 1024]
-    l3_concat = KL.TimeDistributed(SetAbstractionLayer(npoint=None, radius=None, nsample=None,
-                                               mlp=[128, 256, 1024], mlp2=None, group_all=True,
-                                               is_training=is_training, bn_decay=bn_decay,
-                                               name='layer3'))(l2_concat)
+    # [batch * num_rois, num_classes, num_points, num_features+3]
+    concat_points = KL.Lambda(lambda y: tf.reshape(y,
+                                                   (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
+                                                    config.NUM_CLASSES, num_points, num_features+3)))(concat_points)
+    class_points = []
+    for i in range(config.NUM_CLASSES):
+        slice = KL.Lambda(lambda y: y[:, i, :, :])(concat_points)
+        # [batch * num_rois, 128, 323] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 320]
+        l1_concat = MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
+                                                          [32, 64, 128],
+                                                          [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
+                                                          is_training, bn_decay,
+                                                          name=f'msg_setabs1_class_{i}')(slice)
+        # [batch * num_rois, 32, 643] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 640]
+        l2_concat = MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
+                                                          [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
+                                                          is_training, bn_decay,
+                                                          name=f'msg_setabs2_class_{i}')(l1_concat)
+        # [batch * num_rois, 1, 1027] = [batch, num_rois, 1, 3] + [batch, num_rois, 1, 1024]
+        l3_concat = SetAbstractionLayer(npoint=None, radius=None, nsample=None,
+                                        mlp=[128, 256, 1024], mlp2=None, group_all=True,
+                                        is_training=is_training, bn_decay=bn_decay,
+                                        name=f'setabs3_class_{i}')(l2_concat)
 
-    # Feature Propagation layers
-    # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
-    # [batch, num_rois, 32, 131] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 128]
-    l2_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name='fa_layer1')([l2_concat, l3_concat])
-    # [batch, num_rois, 128, 131] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 128]
-    l1_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name='fa_layer2')([l1_concat, l2_concat])
-    # [batch, num_rois, pool_size², 131]
-    l0_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name='fa_layer3')([concat_points, l1_concat])
-    # [batch, num_rois, pool_size², 128, 1]
-    l0_points = KL.Lambda(lambda y: tf.expand_dims(tf.slice(y, [0, 0, 0, 3],
-                                                            [-1, -1, -1, -1]),
-                                                   axis=-1))(l0_concat)
+        # Feature Propagation layers
+        # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
+        # [batch * num_rois, 32, 131] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 128]
+        l2_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                            name=f'fa_layer1_class_{i}')([l2_concat, l3_concat])
+        # [batch * num_rois, 128, 131] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 128]
+        l1_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                            name=f'fa_layer2_class_{i}')([l1_concat, l2_concat])
+        # [batch * num_rois, num_points, 131]
+        l0_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                            name=f'fa_layer3_class_{i}')([slice, l1_concat])
+        # [batch * num_rois, num_points, 128, 1]
+        # l0_points = KL.Lambda(lambda y: tf.expand_dims(tf.slice(y, [0, 0, 3],
+        #                                                         [-1, -1, -1]),
+        #                                                axis=-1))(l0_concat)
+        class_points.append(l0_concat)
+    # [batch, num_rois, num_classes, num_points, 131, 1]
+    points = KL.Lambda(lambda y: tf.reshape(tf.stack(y, axis=2),
+                                            (config.BATCH_SIZE,
+                                             config.TRAIN_ROIS_PER_IMAGE,
+                                             config.NUM_CLASSES,
+                                             num_points, 131, 1)))(class_points)
     # FC layers
     # net = KL.TimeDistributed(KL.Lambda(lambda y: tf_util.conv1d(y, 128, 1, padding='VALID', bn=True,
     #                                          is_training=is_training,
@@ -607,11 +812,14 @@ def build_PointNet2_Feature_Graph(concat_points, is_training, bn_decay):
     # logits = KL.TimeDistributed(KL.Lambda(lambda y: tf_util.conv1d(y, out_number, 1, padding='VALID',
     #                                             activation_fn=None),
     #                    name="conv1d-fc2"))(net)
-    return l0_points
+    return points
 
-def build_PointNet2_Regr_Graph(point_cloud_tensor, pool_size, train_bn,
-                               name, out_number, last_activation="linear"):
-    # transform to [batch, num_rois, h*w(576), 1, 64]
+def build_PointNet2_Regr_Graph(point_cloud_tensor, num_points, config, train_bn,
+                               name, out_number, last_activation="linear", vector_size=1024):
+    partial_point_cloud = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 3, 1, 4, 5]),
+                                                         (config.BATCH_SIZE * config.NUM_CLASSES, num_points,
+                                                          config.TRAIN_ROIS_PER_IMAGE * 7, 1)))(point_cloud_tensor)
+    # transform to [batch, num_rois, num_classes, num_points, 1, 64]
     x = KL.TimeDistributed(KL.Conv2D(128, (1, 128), padding="valid"),
                                     name=f"mrcnn_pointnet_{name}_conv1")(point_cloud_tensor)
     x = KL.TimeDistributed(KL.BatchNormalization(),
@@ -629,7 +837,7 @@ def build_PointNet2_Regr_Graph(point_cloud_tensor, pool_size, train_bn,
                                     name=f'mrcnn_pointnet_{name}_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch, num_rois, 1, 1, vector_size]
-    x = KL.TimeDistributed(KL.MaxPool2D((pool_size * pool_size, 1), padding="valid"),
+    x = KL.TimeDistributed(KL.MaxPool2D((num_points, 1), padding="valid"),
                                     name=f"mrcnn_{name}_sym_max_pool")(x)
     # transform to [batch, num_rois, vector_size]
     x = KL.Lambda(lambda y: tf.squeeze(y, axis=[2, 3]))(x)
