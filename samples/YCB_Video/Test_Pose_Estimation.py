@@ -28,7 +28,8 @@ def calculate_2d_hull_of_pointcloud(pc, rot, trans, camera_calibration_matrix):
 
 
 def load_YCB_meta_infos(id):
-    home = osp.expanduser("~")
+    # home = osp.expanduser("~")
+    home = "/media/pohl"
     path = osp.join(home, "Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id)
     meta = io.loadmat(path)
     int_matrix = meta["intrinsic_matrix"]
