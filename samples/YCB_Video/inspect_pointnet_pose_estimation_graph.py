@@ -36,7 +36,8 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
 # MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
-MODEL_PATH = os.path.join(ROOT_DIR, "logs/ycbv20190228T1000/mask_rcnn_ycbv_0055.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "logs/ycbv20190301T1722/mask_rcnn_ycbv_0098.h5")
+
 
 DEBUG = False
 if DEBUG:
@@ -203,10 +204,10 @@ if TEST_MODE is "training":
         ("pose_positive_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/positive_class_ids").output),
         ("pose_indices", model.keras_model.get_layer("mrcnn_pose_loss/indices").output),
         ("pose_y_true_t", model.keras_model.get_layer("mrcnn_pose_loss/y_true_t").output),
-        # ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").output),
+        ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").output),
         ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").output),
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
-        # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
+        ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
         ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/trans_loss").output),
         ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_loss").output),
@@ -256,7 +257,7 @@ if TEST_MODE is "training":
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").weights),
         ("rot_fc1", model.keras_model.get_layer("mrcnn_pointnet_rot_fc1").weights),
         ("rot_fc2", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").weights),
-        ("rot_fc3", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").weights),
+        ("rot_fc3", model.keras_model.get_layer("mrcnn_pointnet_rot_fc3").weights),
         ("trans_fc1", model.keras_model.get_layer("mrcnn_pointnet_trans_fc1").weights),
         ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").weights),
         ("trans_fc3", model.keras_model.get_layer("mrcnn_pointnet_trans_fc3").weights),
@@ -274,10 +275,10 @@ if TEST_MODE is "training":
         ("pose_positive_class_ids", model.keras_model.get_layer("mrcnn_pose_loss/positive_class_ids").weights),
         ("pose_indices", model.keras_model.get_layer("mrcnn_pose_loss/indices").weights),
         ("pose_y_true_t", model.keras_model.get_layer("mrcnn_pose_loss/y_true_t").weights),
-        # ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").weights),
+        ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").weights),
         ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").weights),
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").weights),
-        # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").weights),
+        ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").weights),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").weights),
         # ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").weights),
         # ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").weights),
@@ -363,7 +364,8 @@ masked_pc = np.array([activations["masked_concat_pc"][0, i, c, :, :3]
                               for i, c in enumerate(det_class_ids)])
 masked_pc_list = []
 for i in range(det_count):
-    pc = masked_pc[i].reshape((100, 3))
+    pc = masked_pc[i].reshape((-1, 3))
+    print(len(np.where(pc == 0)[0]) / 3)
     c = np.ones_like(pc) * colors[np.where(det_class_ids[i] == np.unique(det_class_ids))[0][0]]
     mpc = o3d.PointCloud()
     mpc.points = o3d.Vector3dVector(pc)

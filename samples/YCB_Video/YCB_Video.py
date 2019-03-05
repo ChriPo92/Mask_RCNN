@@ -296,7 +296,7 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     # STEPS_PER_EPOCH = 2
-    TRAIN_ROIS_PER_IMAGE = 200
+    TRAIN_ROIS_PER_IMAGE = 100
     USE_DEPTH_AWARE_OPS = False
 
     LEARNING_RATE = 0.003
@@ -784,21 +784,21 @@ if __name__ == '__main__':
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
-        num += 20
+        num += 30
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 3.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
-        num += 20
+        num += 40
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 6.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
-        num += 20
+        num += 50
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 30.,

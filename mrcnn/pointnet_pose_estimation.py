@@ -295,13 +295,39 @@ class SamplePointsFromMaskedRegion(KL.Layer):
         # transform to [batch, num_rois, pool_size * pool_size, num_classes]
         with tf.control_dependencies([tf.assert_equal(tf.shape(xyz)[2], mask_area)]):
             masks = tf.reshape(masks, (batch, num_rois, -1, num_classes))
-        # [batch, num_rois, pool_size², x, num_classes] -> [batch, num_rois, num_classes, pool_size², x]
-        tiled_xyz = tf.transpose(tf.tile(xyz, [1, 1, 1, 1, num_classes]), [0, 1, 4, 2, 3])
-        tiled_features = tf.transpose(tf.tile(features, [1, 1, 1, 1, num_classes]), [0, 1, 4, 2, 3])
+            # prevent pose estimation to influnce mask computation
+            masks = tf.stop_gradient(masks)
         # [batch, num_rois, pool_size², num_classes]
-        bool_mask = tf.where(masks > 0.5, tf.ones_like(masks), tf.zeros_like(masks))
-        # TODO: this favors items from the top left corner and will bias the selected points
-        # use some random shuffling somewhere
+        bool_mask = tf.where(masks >= 0.5, tf.ones_like(masks), tf.zeros_like(masks))
+        #### Shuffle the points of the mask #####
+        # otherwise the upper left corner of masks is strongly favored
+        idx = tf.meshgrid(*[tf.range(s) for s in [batch, num_rois,
+                                                  mask_area, num_classes]], indexing="ij")
+        # stack the index-tensors to [batch, num_rois, mask_area == pool_size², num_classes, 4]
+        idx = tf.stack(idx, axis=-1)
+        # transpose to [pool_size², batch, num_rois, num_classes, 4]
+        idx = tf.transpose(idx, [2, 0, 1, 3, 4])
+        # shuffle the first dimension of idx (pool_size) and
+        # transpose back to [batch, num_rois, pool_size², num_classes, 4]
+        shuffle_idx = tf.transpose(tf.random.shuffle(idx), [1, 2, 0, 3, 4])
+        # shuffle the masks along the points axis
+        bool_mask = tf.gather_nd(bool_mask, shuffle_idx)
+        # [batch, num_rois, pool_size², x, num_classes] -> [batch, num_rois, pool_size², num_classes, 3]
+        tiled_xyz = tf.transpose(tf.tile(xyz, [1, 1, 1, 1, num_classes]), [0, 1, 2, 4, 3])
+        # shuffle same way as bool_masks
+        tiled_xyz = tf.gather_nd(tiled_xyz, shuffle_idx)
+        # create a mask of the same shape as bool_mask with elements indicating (==1)
+        # if the depth is nonzero, otherwise 0
+        zero_depth_mask = tf.where(tiled_xyz[:, :, :, :, 2] > 0.0, tf.ones_like(masks), tf.zeros_like(masks))
+        # transpose to [batch, num_rois, num_classes, pool_size², 3]
+        tiled_xyz = tf.transpose(tiled_xyz, [0, 1, 3, 2, 4])
+        # [batch, num_rois, pool_size², x, num_classes] -> [batch, num_rois, pool_size², num_classes, 4]
+        tiled_features = tf.transpose(tf.tile(features, [1, 1, 1, 1, num_classes]), [0, 1, 2, 4, 3])
+        # shuffle same way as bool_masks and transpose to [batch, num_rois, num_classes, pool_size², 4]
+        tiled_features = tf.transpose(tf.gather_nd(tiled_features, shuffle_idx), [0, 1, 3, 2, 4])
+        # multiply bool_mask with zero_depth_mask, to get only elements that have nonzero depth
+        # in the resulting mask
+        bool_mask = tf.multiply(zero_depth_mask, bool_mask)
         # select the top "num_points" entries in the boolean mask tensor; since
         # those are only 0 and 1, only not masked entries from the tensor are selected
         # if there are less than "num_points" that are not masked, it is filled with
@@ -355,7 +381,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
 
         Returns: Trans [[batch, num_rois, 3, 1, num_classes]
         """
-    num_points = 100
+    num_points = 200
     # TODO: as it seems, TRAIN_ROIS_PER_IMAGE (200) becomes DETECTION_MAX_INSTANCES (100) for inference
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class
@@ -389,7 +415,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         trans = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "trans",
                                          3 * config.NUM_CLASSES)
         rot = build_PointNet2_Regr_Graph(concat_point_cloud, pool_size, train_bn, "rot",
-                                         9 * config.NUM_CLASSES, last_activation="tanh")
+                                         6 * config.NUM_CLASSES, last_activation="tanh")
     else:
         # [batch, num_rois, num_classes, 3]
         trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
@@ -404,7 +430,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         concat_point_cloud = KL.Lambda(lambda y: tf.concat(y, axis=-2),
                                        name="centered_concat_point_clouds")([pcl_list, feature_list])
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
-                                         train_bn, "rot", 9,
+                                         train_bn, "rot", 6,
                                          last_activation="tanh",
                                          vector_size=config.POINTNET_VECTOR_SIZE)
 
@@ -412,11 +438,11 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
     trans = KL.Lambda(lambda y: tf.transpose(tf.squeeze(y, axis=3), [0, 1, 3, 4, 2]), name="trans_reshape")(trans)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
-                     3, 3), name="rot_reshape")(rot)
+                     3, 2), name="rot_reshape")(rot)
     rot = KL.Lambda(lambda y: tf.transpose(y, [0, 1, 3, 4, 2]))(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
-    # rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
+    rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
 
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])

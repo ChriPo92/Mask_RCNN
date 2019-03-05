@@ -74,12 +74,13 @@ def random_colors(N, bright=True):
 def apply_mask(image, mask, color, alpha=0.5):
     """Apply the given mask to the image.
     """
+    im = np.copy(image)
     for c in range(3):
-        image[:, :, c] = np.where(mask == 1,
-                                  image[:, :, c] *
+        im[:, :, c] = np.where(mask == 1,
+                                  im[:, :, c] *
                                   (1 - alpha) + alpha * color[c] * 255,
-                                  image[:, :, c])
-    return image
+                                  im[:, :, c])
+    return im
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
