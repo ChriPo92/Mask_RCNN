@@ -401,7 +401,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         pcl_list = KL.Lambda(lambda y: y[:, :, :, :, :3])(concat_point_cloud)
         feature_list = KL.Lambda(lambda y: y[:, :, :, :, 3:])(concat_point_cloud)
         pcl_list = KL.Subtract()([pcl_list, trans])
-        concat_point_cloud = KL.Lambda(lambda y: tf.concat(y, axis=-2),
+        concat_point_cloud = KL.Lambda(lambda y: tf.stop_gradient(tf.concat(y, axis=-2)),
                                        name="centered_concat_point_clouds")([pcl_list, feature_list])
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
                                          train_bn, "rot", 9,
