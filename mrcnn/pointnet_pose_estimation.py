@@ -7,7 +7,8 @@ import tensorflow as tf
 from utils import utils, keras_util, tf_util
 from tf_ops.sampling.tf_sampling import farthest_point_sample, gather_point
 from tf_ops.grouping.tf_grouping import query_ball_point, group_point, knn_point
-from tf_ops.interpolation.tf_interpolate import three_nn, three_interpolate
+from tf_ops.interpolation.tf_interpolate import three_nn, three_interpolate, kNN, interpolate_kNN
+from tf_ops.nn_distance.tf_nndistance import nn_distance
 from utils.pointnet_util import sample_and_group, sample_and_group_all, pointnet_sa_module, pointnet_fp_module
 
 class FeaturePointCloud(KE.Layer):
@@ -699,13 +700,16 @@ class FeaturePropagationLayer(KL.Layer):
         points2 = tf.slice(inputs[1], [0, 0, 3], [-1, -1, -1])
         num_rois = xyz1.get_shape()[1]
         # [batch, ndata, 3], [batch, ndata, 3]
-        dist, idx = three_nn(xyz1, xyz2)
+        dist, idx = kNN(xyz1, xyz2, 3)
         dist = tf.maximum(dist, 1e-10)
+        # [batch, ndata, 1]
         norm = tf.reduce_sum((1.0 / dist), axis=2, keepdims=True)
+        # [batch, ndata, 3]
         norm = tf.tile(norm, [1, 1, 3])
+        # 1/d / (1/d1 + 1/d2 + 1/d3)
         weight = (1.0 / dist) / norm
         # [batch, ndata, mchannels]
-        interpolated_points = three_interpolate(points2, idx, weight)
+        interpolated_points = interpolate_kNN(points2, idx, weight)
 
         if points1 is not None:
             # [batch, ndata, nchannel + mchannel]
