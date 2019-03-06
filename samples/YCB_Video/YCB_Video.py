@@ -312,7 +312,7 @@ class YCBVConfig(Config):
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
         "mrcnn_pose_loss/trans_loss": 1000.,
-        "mrcnn_pose_loss/rot_loss": 100.
+        "mrcnn_pose_loss/rot_loss": 500.
     }
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
@@ -798,10 +798,24 @@ if __name__ == '__main__':
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
-        num += 50
+        num += 100
         layers = "heads"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 30.,
+                    epochs=num,
+                    layers=layers,
+                    augmentation=augmentation)
+        num += 50
+        layers = "heads"
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE / 60.,
+                    epochs=num,
+                    layers=layers,
+                    augmentation=augmentation)
+        num += 50
+        layers = "heads"
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE / 100.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)

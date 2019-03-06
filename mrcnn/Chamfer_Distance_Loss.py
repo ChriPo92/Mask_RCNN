@@ -104,8 +104,9 @@ def chamfer_distance_loss_keras(pred_rot, pred_trans, target_rot, target_trans, 
     # pos_obj_models_shape = tf.shape(pos_obj_models)
     # print_op = tf.print([pred_rot_shape, pred_trans_shape, target_rot_shape, target_trans_shape, pos_obj_models_shape])
     # with tf.control_dependencies([print_op]):
+    # [N, 3, 3] x [N, 3, num_points] -> [N, num_points, 3]
     pred_models = KL.Lambda(lambda y: tf.transpose(tf.matmul(y[0], y[1]), (0, 2, 1)),
-                            name="transposed_pred_models")([pred_rot, pos_obj_models])
+                            name="transposed_pred_models", output_shape=lambda s: (s[0][0], s[1][2], s[0][2]))([pred_rot, pos_obj_models])
     total_number_of_points = KL.Lambda(lambda y: tf.shape(y)[0] * tf.shape(y)[2],
                                        name="total_number_of_points")(pos_obj_models)
     pred_models = KL.Add(name="added_pred_models")([pred_models, pred_trans])
@@ -230,16 +231,16 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
 
     # Gather the masks (predicted and true) that contribute to loss
     y_true_t = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
-                         name="mrcnn_pose_loss/y_true_t", output_shape=(1, 3))(
+                         name="mrcnn_pose_loss/y_true_t", output_shape=lambda s: (s[1][0], 1, 3))(
                          [target_trans, positive_ix])  # shape: [pos_ix, 1, 3]
     y_true_r = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
-                         name="mrcnn_pose_loss/y_true_r", output_shape=(3, 3))(
+                         name="mrcnn_pose_loss/y_true_r", output_shape=lambda s: (s[1][0], 3, 3))(
                          [target_rot, positive_ix])  # shape: [pos_ix, 3, 3]
     y_pred_t = KL.Lambda(lambda y: tf.gather_nd(y[0], y[1]),
-                         name="mrcnn_pose_loss/y_pred_t", output_shape=(1, 3))(
+                         name="mrcnn_pose_loss/y_pred_t", output_shape=lambda s: (s[1][0], 1, 3))(
                          [pred_trans, indices])  # shape: [pos_ix, 1, 3]
     y_pred_r = KL.Lambda(lambda y: tf.gather_nd(y[0], y[1]),
-                         name="mrcnn_pose_loss/y_pred_r", output_shape=(3, 3,))(
+                         name="mrcnn_pose_loss/y_pred_r", output_shape=lambda s: (s[1][0], 3, 3))(
                          [pred_rot, indices])  # shape: [pos_ix, 3, 3]
     # the predicted rotations are not orthogonal, which is needed for rotations
     # to get an orthoganl matrix from any 3x3 matrix we use an SVD where
@@ -250,7 +251,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     #                      name="mrcnn_pose_loss/pred_rot_svd_matmul")([u, v])
     pos_xyz_models = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
                                name="mrcnn_pose_loss/pos_xyz_models",
-                               output_shape=(3, N,))(
+                               output_shape=lambda s:  (s[1][0], s[0][1], s[0][2]))(
                                [xyz_models, positive_class_ids])  # [pos_ix, 3, N]
 
     chamfer_loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)

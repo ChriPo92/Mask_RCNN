@@ -273,7 +273,7 @@ class CalcRotMatrix(KL.Layer):
         return rot
 
     def compute_output_shape(self, input_shape):
-        return (input_shape[0], 3, 3, input_shape[-1])
+        return (input_shape[0], input_shape[1], 3, 3, input_shape[-1])
 
 class SamplePointsFromMaskedRegion(KL.Layer):
 
@@ -446,6 +446,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         pcl_list = KL.Subtract()([pcl_list, trans])
         concat_point_cloud = KL.Lambda(lambda y: tf.stop_gradient(tf.concat(y, axis=-2)),
                                        name="centered_concat_point_clouds")([pcl_list, feature_list])
+        # [batch, num_rois, num_classes, 6]
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
                                          train_bn, "rot", 7, 6,
                                          last_activation="tanh",
