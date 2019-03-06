@@ -368,7 +368,8 @@ class SamplePointsFromMaskedRegion(KL.Layer):
         batch = input_shape[0][0]
         num_rois = input_shape[0][1]
         num_classes = input_shape[2][-1]
-        return (batch, num_rois, num_classes, self.num_points, 7, 1)
+        num_features = input_shape[1][-2] + 3
+        return (batch, num_rois, num_classes, self.num_points, num_features, 1)
 
 
 
@@ -410,6 +411,14 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         feature_list = KL.TimeDistributed(KL.BatchNormalization(),
                                           name='mrcnn_pose_feature_bn')(feature_list, training=train_bn)
         feature_list = KL.Activation('relu')(feature_list)
+    elif config.POSE_ESTIMATION_METHOD is "pointnet2":
+        concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
+                                                          name="point_cloud_repr_concat_0")([pcl_list, feature_list])
+        concat_point_cloud = build_PointNet2_Feature_Graph(concat_point_cloud,
+                                                           train_bn, 0.5, pool_size * pool_size, config.TOP_DOWN_PYRAMID_SIZE,
+                                                           config)
+        pcl_list = KL.Lambda(lambda y: y[:, :, :, :3])(concat_point_cloud)
+        feature_list = KL.Lambda(lambda y: y[:, :, :, 3:])(concat_point_cloud)
     # merge to [batch, num_rois, num_classes, num_points, 7, 1]
     concat_point_cloud = SamplePointsFromMaskedRegion(num_points,
                                                       name="point_cloud_repr_concat")([pcl_list, feature_list, masks])
@@ -418,8 +427,6 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
     if config.POSE_ESTIMATION_METHOD is "pointnet2":
         # assert False
         # [batch, num_rois, num_classes, num_points, 131, 1]
-        concat_point_cloud = build_PointNet2_Feature_Graph(concat_point_cloud,
-                                                           train_bn, 0.5, num_points, config.TOP_DOWN_PYRAMID_SIZE, config)
         trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
                                            train_bn, "trans", 131, 3,
                                            vector_size=config.POINTNET_VECTOR_SIZE)
@@ -765,49 +772,46 @@ def build_PointNet2_Feature_Graph(concat_points, is_training, bn_decay, num_poin
     # [batch * num_rois, num_classes, num_points, num_features+3]
     concat_points = KL.Lambda(lambda y: tf.reshape(y,
                                                    (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
-                                                    config.NUM_CLASSES, num_points, num_features+3)))(concat_points)
-    class_points = []
-    for i in range(config.NUM_CLASSES):
-        slice = KL.Lambda(lambda y: y[:, i, :, :])(concat_points)
-        # [batch * num_rois, 128, 323] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 320]
-        l1_concat = MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
-                                                          [32, 64, 128],
-                                                          [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
-                                                          is_training, bn_decay,
-                                                          name=f'msg_setabs1_class_{i}')(slice)
-        # [batch * num_rois, 32, 643] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 640]
-        l2_concat = MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
-                                                          [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
-                                                          is_training, bn_decay,
-                                                          name=f'msg_setabs2_class_{i}')(l1_concat)
-        # [batch * num_rois, 1, 1027] = [batch, num_rois, 1, 3] + [batch, num_rois, 1, 1024]
-        l3_concat = SetAbstractionLayer(npoint=None, radius=None, nsample=None,
-                                        mlp=[128, 256, 1024], mlp2=None, group_all=True,
-                                        is_training=is_training, bn_decay=bn_decay,
-                                        name=f'setabs3_class_{i}')(l2_concat)
+                                                    num_points, num_features+3)))(concat_points)
+    # slice = KL.Lambda(lambda y: y[:, i, :, :])(concat_points)
+    # [batch * num_rois, 128, 323] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 320]
+    l1_concat = MultiScaleGroupingSetAbstractionLayer(128, [0.2, 0.4, 0.8],
+                                                      [32, 64, 128],
+                                                      [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
+                                                      is_training, bn_decay,
+                                                      name='msg_setabs1')(concat_points)
+    # [batch * num_rois, 32, 643] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 640]
+    l2_concat = MultiScaleGroupingSetAbstractionLayer(32, [0.4, 0.8, 1.6], [64, 64, 128],
+                                                      [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
+                                                      is_training, bn_decay,
+                                                      name='msg_setabs2')(l1_concat)
+    # [batch * num_rois, 1, 1027] = [batch, num_rois, 1, 3] + [batch, num_rois, 1, 1024]
+    l3_concat = SetAbstractionLayer(npoint=None, radius=None, nsample=None,
+                                    mlp=[128, 256, 1024], mlp2=None, group_all=True,
+                                    is_training=is_training, bn_decay=bn_decay,
+                                    name='setabs3')(l2_concat)
 
-        # Feature Propagation layers
-        # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
-        # [batch * num_rois, 32, 131] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 128]
-        l2_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                            name=f'fa_layer1_class_{i}')([l2_concat, l3_concat])
-        # [batch * num_rois, 128, 131] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 128]
-        l1_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                            name=f'fa_layer2_class_{i}')([l1_concat, l2_concat])
-        # [batch * num_rois, num_points, 131]
-        l0_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                            name=f'fa_layer3_class_{i}')([slice, l1_concat])
-        # [batch * num_rois, num_points, 128, 1]
-        # l0_points = KL.Lambda(lambda y: tf.expand_dims(tf.slice(y, [0, 0, 3],
-        #                                                         [-1, -1, -1]),
-        #                                                axis=-1))(l0_concat)
-        class_points.append(l0_concat)
+    # Feature Propagation layers
+    # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
+    # [batch * num_rois, 32, 131] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 128]
+    l2_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name=f'fa_layer1')([l2_concat, l3_concat])
+    # [batch * num_rois, 128, 131] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 128]
+    l1_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name=f'fa_layer2')([l1_concat, l2_concat])
+    # [batch * num_rois, num_points, 131]
+    l0_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
+                                        name=f'fa_layer3')([concat_points, l1_concat])
+    # [batch * num_rois, num_points, 128, 1]
+    # l0_points = KL.Lambda(lambda y: tf.expand_dims(tf.slice(y, [0, 0, 3],
+    #                                                         [-1, -1, -1]),
+    #                                                axis=-1))(l0_concat)
+    #     class_points.append(l0_concat)
     # [batch, num_rois, num_classes, num_points, 131, 1]
-    points = KL.Lambda(lambda y: tf.reshape(tf.stack(y, axis=2),
+    points = KL.Lambda(lambda y: tf.reshape(y,
                                             (config.BATCH_SIZE,
                                              config.TRAIN_ROIS_PER_IMAGE,
-                                             config.NUM_CLASSES,
-                                             num_points, 131, 1)))(class_points)
+                                             num_points, 131, 1)))(l0_concat)
     # FC layers
     # net = KL.TimeDistributed(KL.Lambda(lambda y: tf_util.conv1d(y, 128, 1, padding='VALID', bn=True,
     #                                          is_training=is_training,

@@ -117,8 +117,11 @@ if __name__=='__main__':
         weight = tf.ones_like(dist1)/3.0
         interpolated_points = three_interpolate(points, idx1, weight)
     with tf.device("/gpu:0"):
-        dist2, idx2 = kNN(xyz1, xyz2, 3)
-        int_points2 = interpolate_kNN(points, idx2, weight)
+        gpoints = tf.constant(pts)
+        gxyz1 = tf.constant(tmp1)
+        gxyz2 = tf.constant(tmp2)
+        dist2, idx2 = kNN(gxyz1, gxyz2, 3)
+        int_points2 = interpolate_kNN(gpoints, idx2, weight)
     with tf.Session('') as sess:
         now = time.time() 
         for _ in range(1000):
