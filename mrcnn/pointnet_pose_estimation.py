@@ -151,7 +151,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # the step size is (also 1, 7)
     # extract for each class [batch, num_rois, num_points, 7, 1]
     # partial_point_cloud = KL.Lambda(lambda y: y[:, :, j, :, :])(point_cloud_tensor)
-    # transpose to [batch, num_classes, num_points, num_rois, 7, 1] and reshape to [batch, num_classes, num_points, num_rois * 7, 1]
+    # transpose to [batch, num_classes, num_points, num_rois, in_features, 1] and reshape to [batch, num_classes, num_points, num_rois * in_features, 1]
     partial_point_cloud = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 3, 1, 4, 5]),
                                                          (config.BATCH_SIZE * config.NUM_CLASSES, num_points,
                                                           config.TRAIN_ROIS_PER_IMAGE * in_features, 1)))(point_cloud_tensor)

@@ -995,13 +995,19 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                        name="pool_squeeze")(x)
 
     # Classifier head
-    shared = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
+    # shape = K.int_shape(shared)
+    dim1 = shared._keras_shape[1]
+    # shape = KL.Lambda(lambda y: tf.shape(y))(shared)
+    # shared = KL.Reshape((config.BATCH_SIZE * shape[1], fc_layers_size))(shared)
+    shared = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE * dim1,
                                                 fc_layers_size)))(shared)
     mrcnn_class_logits = KL.Dense(num_classes,
                                             name='mrcnn_class_logits')(shared)
     mrcnn_class_logits = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE,
-                                                            config.TRAIN_ROIS_PER_IMAGE,
+                                                            dim1,
                                                             num_classes)))(mrcnn_class_logits)
+    # mrcnn_class_logits = KL.Reshape((config.BATCH_SIZE,
+    #                                  shape[1], num_classes))(mrcnn_class_logits)
     mrcnn_probs = KL.Activation("softmax",
                                      name="mrcnn_class")(mrcnn_class_logits)
     # BBox head
@@ -1010,9 +1016,11 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                            name='mrcnn_bbox_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
     mrcnn_bbox = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE,
-                                                    config.TRAIN_ROIS_PER_IMAGE,
+                                                    dim1,
                                                     num_classes, 4)), name="mrcnn_bbox")(x)
-
+    # mrcnn_bbox = KL.Reshape((config.BATCH_SIZE,
+    #                                                 shape[1],
+    #                                                 num_classes, 4))(x)
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
 
@@ -1063,6 +1071,8 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
                            name="mrcnn_mask_deconv")(x)
+    # print_op = tf.print([tf.shape(x)])
+    # with tf.control_dependencies([print_op]):
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
                            name="mrcnn_mask")(x)
     return x

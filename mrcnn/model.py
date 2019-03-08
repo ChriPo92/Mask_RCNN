@@ -344,7 +344,7 @@ class MaskRCNN():
                 ku.fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, input_image_meta,
                                      config.POOL_SIZE, config.NUM_CLASSES,
                                      train_bn=config.TRAIN_BN,
-                                     fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+                                     fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE, config=config)
 
             # Detections
             # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in
@@ -365,11 +365,11 @@ class MaskRCNN():
                     mrcnn_pose_trans, mrcnn_pose_rot = ku.build_fpn_pose_graph(detection_boxes, mrcnn_feature_maps,
                                                                             input_depth, input_image_meta,
                                                                             config.NUM_CLASSES, config.TRAIN_BN)
-                if config.POSE_ESTIMATION_METHOD in ["pointnet", "both"]:
+                if config.POSE_ESTIMATION_METHOD in ["pointnet", "pointnet2", "both"]:
                     point_pose_trans, point_pose_rot = pn.build_fpn_pointnet_pose_graph(detection_boxes, mrcnn_feature_maps,
-                                                                                     input_depth, input_image_meta,
+                                                                                     input_depth, input_image_meta, mrcnn_mask,
                                                                                      input_intrinsic_matrices,
-                                                                                     config, config.POSE_POOL_SIZE,
+                                                                                     config, 2 * config.MASK_POOL_SIZE,
                                                                                      config.TRAIN_BN)
                     if mrcnn_pose_rot is None and mrcnn_pose_trans is None:
                         mrcnn_pose_trans = point_pose_trans
@@ -813,9 +813,9 @@ class MaskRCNN():
             f_trans = trans[np.arange(N), :, :, class_ids]
             # transform arbitrary matrix into a rotation matrix using svd
             # https://mathoverflow.net/questions/86539/closest-3d-rotation-matrix-in-the-frobenius-norm-sense
-            u, s, vh = np.linalg.svd(f_rots)
-            r = np.matmul(u, vh)
-            pre_poses = np.concatenate((r, f_trans), axis=2)
+            # u, s, vh = np.linalg.svd(f_rots)
+            # r = np.matmul(u, vh)
+            pre_poses = np.concatenate((f_rots, f_trans), axis=2)
             shape = pre_poses.shape
             # add row to each pose containing [0, 0, 0, 1]
             poses = np.concatenate((pre_poses, np.tile([0, 0, 0, 1], (shape[0], 1, 1))), axis=1)

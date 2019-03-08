@@ -35,6 +35,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         defined in MINI_MASK_SHAPE.
     pose: [4, 4, instance_count]. Translation Matrix of each instance in
         the image
+    intrinsic_matrix: [3, 3] adapted intrinsic matrix for the molded image
     """
     # Load image and mask
     image = dataset.load_image(image_id)
