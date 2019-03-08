@@ -458,7 +458,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
                                          train_bn, "rot", 7, 6,
                                          last_activation="tanh",
-                                         vector_size=config.POINTNET_VECTOR_SIZE)
+                                         vector_size=int(1.5*config.POINTNET_VECTOR_SIZE))
 
     # [batch, num_rois, 3, 1, num_classes]
     trans = KL.Lambda(lambda y: tf.transpose(tf.squeeze(y, axis=3), [0, 1, 3, 4, 2]), name="trans_reshape")(trans)
@@ -795,13 +795,14 @@ def build_PointNet2_Feature_Graph(concat_points, is_training, bn_decay, num_poin
     # l3_points = tf.concat([l3_points, tf.expand_dims(one_hot_vec, 1)], axis=2)
     # [batch * num_rois, 32, 131] = [batch, num_rois, 32, 3] + [batch, num_rois, 32, 128]
     l2_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name=f'fa_layer1')([l2_concat, l3_concat])
+                                        name=f'mrcnn_pointnet_'
+                                             f'fa_layer1')([l2_concat, l3_concat])
     # [batch * num_rois, 128, 131] = [batch, num_rois, 128, 3] + [batch, num_rois, 128, 128]
     l1_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name=f'fa_layer2')([l1_concat, l2_concat])
+                                        name=f'mrcnn_pointnet_fa_layer2')([l1_concat, l2_concat])
     # [batch * num_rois, num_points, 131]
     l0_concat = FeaturePropagationLayer([128, 128], is_training, bn_decay,
-                                        name=f'fa_layer3')([concat_points, l1_concat])
+                                        name=f'mrcnn_pointnet_fa_layer3')([concat_points, l1_concat])
     # [batch * num_rois, num_points, 128, 1]
     # l0_points = KL.Lambda(lambda y: tf.expand_dims(tf.slice(y, [0, 0, 3],
     #                                                         [-1, -1, -1]),

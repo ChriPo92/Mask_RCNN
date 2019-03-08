@@ -262,7 +262,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # [pos_ix]
     rot_trace = KL.Lambda(lambda y: tf.linalg.trace(tf.matmul(y[0], tf.linalg.inv(y[1]))),
                           name="mrcnn_pose_loss/rot_trace")([y_pred_r, y_true_r])
-    rot_loss = KL.Lambda(lambda y: tf.math.acos(tf.matmul(y - tf.ones_like(y), 0.5)), name="mrcnn_pose_loss/rot_error")(rot_trace)
+    rot_loss = KL.Lambda(lambda y: tf.math.acos(tf.clip_by_value(tf.multiply(y - tf.ones_like(y), 0.5), -1, 1)), name="mrcnn_pose_loss/rot_error")(rot_trace)
     trans_loss = KL.Lambda(lambda y: tf.sqrt(tf.reduce_mean(tf.keras.losses.mse(y[0], y[1])) + 1e-8),
                          name="mrcnn_pose_loss/trans_error")([y_true_t, y_pred_t])
     huber_trans_loss = KL.Lambda(lambda y: tf.reduce_mean(huber_loss(tf.norm(y[0]-y[1], axis=-1), 2.0)),
