@@ -13,6 +13,10 @@ import random
 import itertools
 import colorsys
 import cv2
+import matplotlib
+## solves the BadWindow Error of Matplotlib
+matplotlib.use('Qt5Agg')
+
 
 import numpy as np
 from skimage.measure import find_contours
@@ -21,6 +25,10 @@ from matplotlib import patches,  lines
 from matplotlib.patches import Polygon
 from scipy.spatial import ConvexHull
 import IPython.display
+
+import obj_pose_eval.pose_error as pose_error
+import obj_pose_eval.renderer as renderer
+import open3d as o3d
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../")
@@ -56,7 +64,6 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
                    norm=norm, interpolation=interpolation)
         i += 1
     plt.show()
-
 
 def random_colors(N, bright=True):
     """
@@ -178,8 +185,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             ax.plot([p[0, 0], p[3, 0]], [p[0, 1], p[3, 1]], "y-")
     ax.imshow(masked_image.astype(np.uint8))
 
-    if auto_show:
-        plt.show()
+    # if auto_show:
+    #     plt.show()
 
 
 def display_differences(image,
@@ -369,7 +376,7 @@ def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
     plt.tight_layout()
     plt.xlabel("Ground Truth")
     plt.ylabel("Predictions")
-    plt.show()
+    # plt.show()
 
 
 def draw_boxes(image, boxes=None, refined_boxes=None,
@@ -562,11 +569,14 @@ def visualize_poses(image, poses, object_ids, camera_matrix, ax=None):
     :param object_ids: [N]
     :return:
     """
+    from mpl_toolkits.mplot3d import Axes3D
     if ax is None:
         fig, ax = plt.subplots()
     if image.shape[2] > 3:
         image = image.astype(np.uint32).copy()[:, :, :3]
     ax.imshow(image)
+    fig = plt.figure()
+    ax_3d = fig.add_subplot(111, projection='3d')
     classes = np.unique(object_ids)
     color_cycle = plt.cm.get_cmap("jet", len(classes))
     for i, cl in enumerate(classes):
@@ -574,11 +584,38 @@ def visualize_poses(image, poses, object_ids, camera_matrix, ax=None):
         ids = np.where(object_ids == cl)[0]
         class_poses = poses[ids]
         for pose in class_poses:
+            make_quivers(pose, ax_3d, color)
             p = get_orientation_line_points(pose, camera_matrix)
             ax.plot([p[0, 0], p[1, 0]], [p[0, 1], p[1, 1]], color=color)
             ax.plot([p[0, 0], p[2, 0]], [p[0, 1], p[2, 1]], color=color)
             ax.plot([p[0, 0], p[3, 0]], [p[0, 1], p[3, 1]], color=color)
     return ax
+
+def make_quivers(pose, ax, color):
+    origin = np.array([0, 0, 0])
+    x = np.array([0.5, 0, 0])
+    y = np.array([0, 0.5, 0])
+    z = np.array([0, 0, 0.5])
+    trans = pose[:3, 3]
+    rot = pose[:3, :3]
+    X = trans[0]
+    Y = trans[1]
+    Z = trans[2]
+    r_x = np.matmul(rot, x)
+    r_y = np.matmul(rot, y)
+    r_z = np.matmul(rot, z)
+    U_x = r_x[0]
+    U_y = r_y[0]
+    U_z = r_z[0]
+    V_x = r_x[1]
+    V_y = r_y[1]
+    V_z = r_z[1]
+    W_x = r_x[2]
+    W_y = r_y[2]
+    W_z = r_z[2]
+    ax.quiver(X, Y, Z, U_x, V_x, W_x, colors=color)
+    ax.quiver(X, Y, Z, U_y, V_y, W_y, colors=color)
+    ax.quiver(X, Y, Z, U_z, V_z, W_z, colors=color)
 
 def visualize_pointcloud_hulls(image, poses, pointclouds, object_ids, camera_matrix, ax=None):
     if ax is None:
@@ -598,3 +635,29 @@ def visualize_pointcloud_hulls(image, poses, pointclouds, object_ids, camera_mat
                                                           class_poses[j][:3, 3], camera_matrix)
             for simplex in hull.simplices:
                 ax.plot(pc_2d[simplex, 0], pc_2d[simplex, 1], color=color)
+
+
+def render_predicted_poses(image, poses, classes, gt_classes, classes_dict, intrinsic_matrix,
+                           data_root_path=os.path.expanduser("~/Data/YCB_Video_Dataset/"), ax=None,
+                           save_path=None):
+    if ax is None:
+        fig, ax = plt.subplots()
+    image = image.astype(np.uint32).copy()
+    ax.imshow(image)
+    for i, id in enumerate(gt_classes):
+        name = classes_dict[id]
+        try:
+            j = np.where(classes == id)[0][0]
+        except IndexError:
+            continue
+        pose = poses[j]
+        ply = o3d.read_triangle_mesh(os.path.join(data_root_path, "models/", name, "textured.ply"))
+        ply.compute_vertex_normals()
+        model = {"pts": np.asarray(ply.vertices) * 1000, "normals": np.asarray(ply.vertex_normals),
+                 "colors": np.asarray(ply.vertex_colors), "faces": np.asarray(ply.triangles)}
+        pose_dict = {"R": pose[:3, :3], "t": pose[:3, 3:] * 1000}
+        r, d = renderer.render(model, (640, 480), intrinsic_matrix, pose_dict["R"], pose_dict["t"])
+        ax.imshow(np.concatenate([r / 255., 0.8 * np.expand_dims(d != 0, axis=-1)], axis=-1))
+    if save_path is not None:
+        ax.get_figure().savefig(save_path)
+    # plt.show()
