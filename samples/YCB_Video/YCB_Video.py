@@ -314,6 +314,7 @@ class YCBVConfig(Config):
         "mrcnn_pose_loss/trans_loss": 1000.,
         "mrcnn_pose_loss/rot_loss": 500.
     }
+    #MASK_POOL_SIZE = 10
 
     # RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
     # IMAGE_CHANNEL_COUNT = 4

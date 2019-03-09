@@ -246,15 +246,15 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # to get an orthoganl matrix from any 3x3 matrix we use an SVD where
     # a = U * diag(S) * V^h
     # TODO: There seem to be Nans in the Gradient of the SVD
-    # s, u, v = SVD(name="mrcnn_pose_loss/pred_rot_svd")(y_pred_r)
-    # y_pred_r = KL.Lambda(lambda y: tf.linalg.matmul(y[0], y[1]),
-    #                      name="mrcnn_pose_loss/pred_rot_svd_matmul")([u, v])
+    s, u, v = SVD(name="mrcnn_pose_loss/pred_rot_svd")(y_pred_r)
+    y_pred_svd_r = KL.Lambda(lambda y: tf.linalg.matmul(y[0], y[1]),
+                          name="mrcnn_pose_loss/pred_rot_svd_matmul")([u, v])
     pos_xyz_models = KL.Lambda(lambda y: tf.gather(y[0], y[1]),
                                name="mrcnn_pose_loss/pos_xyz_models",
                                output_shape=lambda s:  (s[1][0], s[0][1], s[0][2]))(
                                [xyz_models, positive_class_ids])  # [pos_ix, 3, N]
 
-    chamfer_loss = chamfer_distance_loss_keras(y_pred_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
+    chamfer_loss = chamfer_distance_loss_keras(y_pred_svd_r, y_pred_t, y_true_r, y_true_t, pos_xyz_models)
     # rot_loss = KL.Lambda(lambda y: tf.reduce_mean(tf.keras.losses.mae(y[0], y[1])),
     #                         name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
     # rot_loss = KL.Lambda(lambda y: tf.sqrt(tf.reduce_mean(tf.keras.losses.mse(y[0], y[1])) + 1e-8),
@@ -262,7 +262,13 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     # [pos_ix]
     rot_trace = KL.Lambda(lambda y: tf.linalg.trace(tf.matmul(y[0], tf.linalg.inv(y[1]))),
                           name="mrcnn_pose_loss/rot_trace")([y_pred_r, y_true_r])
-    rot_loss = KL.Lambda(lambda y: tf.math.acos(tf.clip_by_value(tf.multiply(y - tf.ones_like(y), 0.5), -1, 1)), name="mrcnn_pose_loss/rot_error")(rot_trace)
+    rot_loss = KL.Lambda(lambda y: tf.reduce_mean(
+        tf.math.acos(
+            tf.clip_by_value(
+                tf.multiply(y - tf.ones_like(y), 0.5),
+                -0.999999, 0.999999)
+        )
+    ), name="mrcnn_pose_loss/rot_error")(rot_trace)
     trans_loss = KL.Lambda(lambda y: tf.sqrt(tf.reduce_mean(tf.keras.losses.mse(y[0], y[1])) + 1e-8),
                          name="mrcnn_pose_loss/trans_error")([y_true_t, y_pred_t])
     huber_trans_loss = KL.Lambda(lambda y: tf.reduce_mean(huber_loss(tf.norm(y[0]-y[1], axis=-1), 2.0)),
