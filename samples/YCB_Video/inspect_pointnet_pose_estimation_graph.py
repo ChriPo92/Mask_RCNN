@@ -6,7 +6,8 @@
 # Code and visualizations to test, debug, and evaluate the Mask R-CNN model.
 
 # In[1]:
-
+import matplotlib
+matplotlib.use("Qt5Agg")
 
 import os
 import sys
@@ -35,9 +36,8 @@ import keras as k
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-# MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_1.h5")
-MODEL_PATH = os.path.join(ROOT_DIR, "logs/ycbv20190301T1722/mask_rcnn_ycbv_0098.h5")
-
+MODEL_PATH = os.path.join(ROOT_DIR, "weights/mask_rcnn_ycbv_pose_estimation_test_3.h5")
+# MODEL_PATH = os.path.join(ROOT_DIR, "logs/ycbv20190301T1722/mask_rcnn_ycbv_0098.h5")
 
 DEBUG = False
 if DEBUG:
@@ -61,8 +61,8 @@ print(os.path.join(ROOT_DIR, "samples/YCB_Video"))
 import samples.YCB_Video.YCB_Video as ycbv
 
 config = ycbv.YCBVConfig()
-# DATASET_DIR = os.path.join(os.path.expanduser("~"), "Hitachi/YCB_Video_Dataset")
-DATASET_DIR = os.path.join("/media/pohl", "Hitachi/YCB_Video_Dataset")
+DATASET_DIR = os.path.join(os.path.expanduser("~"), "Data/YCB_Video_Dataset")
+# DATASET_DIR = os.path.join("/media/pohl", "Hitachi/YCB_Video_Dataset")
 
 # Override the training configurations with a few
 # changes for inferencing.
@@ -106,7 +106,7 @@ def get_ax(rows=1, cols=1, size=16):
 # Build validation dataset
 
 dataset = ycbv.YCBVDataset()
-dataset.load_ycbv(DATASET_DIR, "train", use_rgbd=True)
+dataset.load_ycbv(DATASET_DIR, "minival", use_rgbd=True)
 dataset.prepare()
 
 # Create model in inference mode
@@ -118,8 +118,8 @@ model.load_weights(MODEL_PATH, by_name=True)#, exclude=["mrcnn_pointnet_rot_fc3"
 
 # ## Run Detection
 
-image_id = random.choice(dataset.image_ids)
-# image_id = 95506
+# image_id = random.choice(dataset.image_ids)
+image_id = 16360
 info = dataset.image_info[image_id]
 image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_pose, intrinsic_matrix_gt = load_image_gt(dataset, config, image_id,
                                                                                    use_mini_mask=False)
@@ -184,9 +184,12 @@ if TEST_MODE is "training":
         ("pose_conv4", model.keras_model.get_layer("mrcnn_pointnet_trans_conv4").output),
         ("pose_conv5", model.keras_model.get_layer("mrcnn_pointnet_trans_conv5").output),
         ("sym_max_pool", model.keras_model.get_layer("mrcnn_trans_sym_max_pool").output),
+        ("trans_preshape", model.keras_model.get_layer("trans_preshape").output),
+        ("centered_concat_point_clouds", model.keras_model.get_layer("centered_concat_point_clouds").output),
         ("rot_fc1", model.keras_model.get_layer("mrcnn_pointnet_rot_fc1").output),
         ("rot_fc2", model.keras_model.get_layer("mrcnn_pointnet_rot_fc2").output),
         ("rot_fc3", model.keras_model.get_layer("mrcnn_pointnet_rot_fc3").output),
+        ("rot_bn7", model.keras_model.get_layer('mrcnn_pointnet_rot_bn7').output),
         ("trans_fc1", model.keras_model.get_layer("mrcnn_pointnet_trans_fc1").output),
         ("trans_fc2", model.keras_model.get_layer("mrcnn_pointnet_trans_fc2").output),
         ("trans_fc3", model.keras_model.get_layer("mrcnn_pointnet_trans_fc3").output),
@@ -207,7 +210,7 @@ if TEST_MODE is "training":
         ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").output),
         ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").output),
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").output),
-        ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
+        # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").output),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").output),
         ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/trans_loss").output),
         ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_loss").output),
@@ -278,7 +281,7 @@ if TEST_MODE is "training":
         ("pose_y_true_r", model.keras_model.get_layer("mrcnn_pose_loss/y_true_r").weights),
         ("pose_y_pred_t", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_t").weights),
         ("pose_y_pred_r", model.keras_model.get_layer("mrcnn_pose_loss/y_pred_r").weights),
-        ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").weights),
+        # ("pose_pred_rot_svd_matmul", model.keras_model.get_layer("mrcnn_pose_loss/pred_rot_svd_matmul").weights),
         # ("pose_pos_xyz_models", model.keras_model.get_layer("mrcnn_pose_loss/pos_xyz_models").weights),
         # ("transl_loss", model.keras_model.get_layer("mrcnn_pose_loss/transl_error").weights),
         # ("rot_loss", model.keras_model.get_layer("mrcnn_pose_loss/rot_error").weights),
@@ -365,16 +368,15 @@ masked_pc = np.array([activations["masked_concat_pc"][0, i, c, :, :3]
 masked_pc_list = []
 for i in range(det_count):
     pc = masked_pc[i].reshape((-1, 3))
-    print(len(np.where(pc == 0)[0]) / 3)
     c = np.ones_like(pc) * colors[np.where(det_class_ids[i] == np.unique(det_class_ids))[0][0]]
     mpc = o3d.PointCloud()
     mpc.points = o3d.Vector3dVector(pc)
     mpc.colors = o3d.Vector3dVector(c)
     masked_pc_list.append(mpc)
-o3d.draw_geometries(masked_pc_list + [pcd])
+# o3d.draw_geometries(masked_pc_list + [pcd])
 # pred_pc = o3d.PointCloud()
 # pred_pc.points = o3d.Vector3dVector(activations["added_pred_models"].reshape(-1, 3))
-o3d.draw_geometries([roi_pc, pcd])
+# o3d.draw_geometries([roi_pc, pcd])
 
 
 with open(config.XYZ_MODEL_PATH, "rb") as f:
@@ -455,8 +457,8 @@ for i in np.unique(det_class_ids):
 #TODO: check that the poses and translations and their groundtruths are on the same scale (rel. image, vs world?)
 
 # transl is [n, 1, 3] and needs to be [N, 3, 1] to concatenate to [N, 3, 4] poses
-# concat_poses = np.concatenate([activations["pose_y_true_r"], np.transpose(activations["pose_y_true_t"], [0, 2, 1])], axis=2)
-# visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix_gt)
+concat_poses = np.concatenate([activations["pose_y_true_r"], np.transpose(activations["pose_y_true_t"], [0, 2, 1])], axis=2)
+visualize.visualize_poses(image, concat_poses, activations["pose_positive_class_ids"], intrinsic_matrix_gt)
 # models = np.transpose(activations["pose_pos_xyz_models"], [0, 2, 1])
 # homogeneous_models = np.concatenate([models, np.tile([1], (models.shape[0], models.shape[1], 1))], axis=2)
 # trans_hom_models = np.matmul(concat_poses, np.transpose(homogeneous_models, [0, 2, 1])).transpose([0, 2, 1])
@@ -483,9 +485,10 @@ visualize.visualize_poses(image, concat_poses2, activations["pose_positive_class
 
 
 ##### Check correctness of CalcRotMatrix
-# r_m = np.transpose(activations["rot_reshape"], [0, 1, 4, 3, 2])
-# x_1 = r_m[:, :, :, 0, :]
-# x_2 = r_m[:, :, :, 1, :]
+# r_m = np.transpose(activations["rot_reshape"], [0, 1, 3, 4, 2])
+# r_m2 = np.transpose(r_m, [0, 1, 4, 3, 2])
+# x_1 = r_m2[:, :, :, 0, :]
+# x_2 = r_m2[:, :, :, 1, :]
 # x_1 /= np.expand_dims(np.sqrt(np.sum(np.square(x_1), axis=3)), axis=-1)
 # x_2 /= np.expand_dims(np.sqrt(np.sum(np.square(x_2), axis=3)), axis=-1)
 # x_3 = np.cross(x_1, x_2)

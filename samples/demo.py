@@ -26,9 +26,14 @@ import mrcnn.model as modellib
 from mrcnn.data_generation import load_image_gt
 from mrcnn import visualize
 
-DATA_ROOT_PATH = os.path.expanduser("~")
-# DATA_ROOT_PATH = /media/pohl
+import obj_pose_eval.renderer as renderer
+import obj_pose_eval.inout as inout
+import obj_pose_eval.pose_error as pose_error
+import obj_pose_eval.transform as transform
 
+# DATA_ROOT_PATH = os.path.expanduser("~")
+# DATA_ROOT_PATH = /media/pohl
+DATA_ROOT_PATH = os.path.expanduser("~/Data/YCB_Video_Dataset/")
 # Import COCO config
 sys.path.append(os.path.join(ROOT_DIR, "samples/coco/"))  # To find local version
 
@@ -78,8 +83,9 @@ class InferenceConfig(YCBVConfig):
     IMAGES_PER_GPU = 1
     USE_DEPTH_AWARE_OPS = True
     POSE_ESTIMATION_METHOD = "pointnet"
-    POINTNET_VECTOR_SIZE = 1024
+    POINTNET_VECTOR_SIZE = 256
     TRAIN_ROIS_PER_IMAGE = 100
+    DETECTION_MAX_INSTANCES = 100
     # IMAGE_RESIZE_MODE = "square"
 
 
@@ -91,9 +97,9 @@ config = InferenceConfig()
 
 # Create model object in inference mode.
 model = modellib.MaskRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
-
+# model.compile(0.1, 0.9)
 # Load weights trained on MS-COCO
-model.load_weights(COCO_MODEL_PATH, by_name=True)#, exclude=["conv1a", "conv1b"])
+model.load_weights(COCO_MODEL_PATH, by_name=True)
 
 # COCO Class names
 # Index of the class in the list is its ID. For example, to get ID of
@@ -131,7 +137,7 @@ def calculate_2d_hull_of_pointcloud(pc, rot, trans, camera_calibration_matrix):
 
 
 def load_YCB_meta_infos(id):
-    path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id
+    path = DATA_ROOT_PATH + "data/%s-meta.mat" % id
     meta = io.loadmat(path)
     int_matrix = meta["intrinsic_matrix"]
     classes = meta["cls_indexes"]
@@ -170,7 +176,7 @@ def get_orientation_line_points(pose, K, scale=0.05):
 
 
 def load_bbox(id):
-    path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/%s-box.txt" % id
+    path = DATA_ROOT_PATH + "data/%s-box.txt" % id
     d = {}
     with open(path, "r") as f:
         for row in f:
@@ -181,7 +187,7 @@ def load_bbox(id):
 
 
 def load_classes_id_dict():
-    path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/image_sets/classes.txt"
+    path = DATA_ROOT_PATH + "image_sets/classes.txt"
     d = {}
     with open(path, "r") as f:
         for i, val in enumerate(f):
@@ -190,11 +196,11 @@ def load_classes_id_dict():
 
 
 dataset = YCBVDataset()
-dataset.load_ycbv(DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/", "trainval", use_rgbd=config.USE_DEPTH_AWARE_OPS)
+dataset.load_ycbv(DATA_ROOT_PATH, "trainval", use_rgbd=config.USE_DEPTH_AWARE_OPS)
 dataset.prepare()
 
-dpt_file = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/0054/000016-depth.png"
-img_file = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/data/0054/000016-color.png"
+dpt_file = DATA_ROOT_PATH + "data/0054/000016-depth.png"
+img_file = DATA_ROOT_PATH + "data/0054/000016-color.png"
 # img_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0081/000982-color.png"
 # dpt_file = "/media/pohl/Hitachi/YCB_Video_Dataset/data/0054/000001-depth.png"
 # dpt_file = "/common/homes/staff/pohl/Code/Python/Mask_RCNN/images/RobDekon/snapshot_11-22-2018_11-35-34.152_depth.png"
@@ -318,7 +324,7 @@ def get_icp_RT(results, bboxes, intrinsic_matrix):
             os.remove("model.pcd")
         # transform xyz pointcloud to pcl format
         sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
-        model_path = osp.join(DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/models", key)
+        model_path = osp.join(DATA_ROOT_PATH + "models", key)
         if not osp.exists(osp.join(model_path, "model_downsampled.pcd")):
             sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
                    stdout=sp.DEVNULL, check=True)
@@ -386,7 +392,7 @@ def get_ransac_RT(results, bboxes, intrinsic_matrix, depth, image, voxel_size=0.
         # transform xyz pointcloud to pcl format
         # sp.run(["pcl_xyz2pcd", "mask.xyz", "mask.pcd"], stdout=sp.DEVNULL, check=True)
 
-        model_path = osp.join(DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/models", key)
+        model_path = osp.join(DATA_ROOT_PATH + "models", key)
         if not osp.exists(osp.join(model_path, "model.pcd")):
             sp.run(["pcl_obj2pcd", osp.join(model_path, "textured.obj"), osp.join(model_path, "model.pcd")],
                    stdout=sp.DEVNULL, check=True)
@@ -435,20 +441,38 @@ def visualize_icp_vs_ground_truth(image, depth, poses, classes, gt_poses, gt_cla
     fig.set_size_inches(15, 30)
     ax[0].imshow(image)
     ax[1].imshow(depth)
+    f, a = plt.subplots(len(gt_classes), 2)
+    errors = []
+    rgb, dep = [], []
     for i, id in enumerate(gt_classes):
         name = classes_dict[id[0]]  # id = 0 is probably background ??
         gt_pose = gt_poses[:, :, i]
+        gt_pose_dict = {"R": gt_pose[:3, :3], "t": gt_pose[:3, 3:] * 1000}
         try:
             j = np.where(classes == id[0])[0][0]
         except IndexError:
             continue
         pose = poses[j]
+        assert pose.shape == (4, 4)
+        pose_dict = {"R": pose[:3, :3], "t": pose[:3, 3:] * 1000}
+
+        ply = o3d.read_triangle_mesh(osp.join(DATA_ROOT_PATH, "models/", name, "textured.ply"))
+        ply.compute_vertex_normals()
+        model = {"pts": np.asarray(ply.vertices) * 1000, "normals": np.asarray(ply.vertex_normals),
+                 "colors": np.asarray(ply.vertex_colors), "faces": np.asarray(ply.triangles)}
+        r, d = renderer.render(model, (640, 480), intrinsic_matrix, pose_dict["R"], pose_dict["t"])
+        a[i, 0].imshow(r)
+        a[i, 1].imshow(d)
+        ax[0].imshow(np.concatenate([r / 255., 0.7 * np.expand_dims(d != 0, axis=-1)], axis=-1))
+        rgb.append(r)
+        dep.append(d)
+        p_error = pose_error.vsd(pose_dict, gt_pose_dict, model, depth * 1000, 3, 30, intrinsic_matrix)
         if mode == "hull" or mode == "both":
-            model_path = DATA_ROOT_PATH + "/Hitachi/YCB_Video_Dataset/models"
+            model_path = DATA_ROOT_PATH + "models"
             pc = linemod_point_cloud(osp.join(model_path, name, "points.xyz"))
             pc_2d, hull = calculate_2d_hull_of_pointcloud(pc, gt_pose[:, :3], gt_pose[:, 3], intrinsic_matrix)
             pred_pc_2d, pred_hull = calculate_2d_hull_of_pointcloud(pc, pose[:3, :3], pose[:3, 3],
-                                                                  intrinsic_matrix)
+                                                                    intrinsic_matrix)
             for simplex in hull.simplices:
                 ax[0].plot(pc_2d[simplex, 0], pc_2d[simplex, 1], 'k-')
             for simplex in pred_hull.simplices:
@@ -470,7 +494,9 @@ def visualize_icp_vs_ground_truth(image, depth, poses, classes, gt_poses, gt_cla
             masked = np.ma.masked_where(mask == 0, mask)
             ax[0].imshow(masked, "jet", alpha=0.7)
             ax[1].imshow(masked, "jet", alpha=0.7)
+        errors.append(p_error)
     plt.show()
+    return errors, rgb, dep
 
 #
 # icp_poses, item_corr = get_ransac_RT(r, bboxs, intrinsic_matrix, depth=depth, image=image, voxel_size=0.0001)
@@ -491,8 +517,13 @@ def order_array_with_respect_to(x, y):
 
 ids = order_array_with_respect_to(r["class_ids"], classes)
 
-visualize_icp_vs_ground_truth(np.array(image[:, :, :3], dtype=np.int16),
+errors, rgb, depths = visualize_icp_vs_ground_truth(np.array(image[:, :, :3], dtype=np.int16),
                               depth, r["poses"], r["class_ids"],
                               poses, classes, classes_dict,
                               intrinsic_matrix, r["masks"][ids],
                               show_mask=False, mode="both")
+# R = poses[:3, :3, 0]
+# t = poses[:3, 3:, 0] * 1000
+# mesh = o3d.read_triangle_mesh("/home/christoph/Data/YCB_Video_Dataset/models/002_master_chef_can/textured.ply")
+# model = {"pts": np.asarray(mesh.vertices) * 1000, "colors": np.asarray(mesh.vertex_colors), "faces": np.asarray(mesh.triangles)}
+# rgb, depth = renderer.render(model, (500, 500), intrinsic_matrix, R, t)

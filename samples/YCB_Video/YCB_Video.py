@@ -42,6 +42,8 @@ import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
 import matplotlib.pyplot as plt
 import tensorflow as tf
+import open3d as o3d
+import obj_pose_eval.pose_error as pose_error
 
 DCKL = da_conv.keras_layers
 DPKL = da_avg_pool.keras_layers
@@ -52,7 +54,7 @@ ROOT_DIR = os.path.abspath("../../")
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
-from mrcnn import model as modellib, visualize
+from mrcnn import model as modellib, visualize, data_generation as data
 from utils import utils
 
 # Path to trained weights file
@@ -212,6 +214,20 @@ class YCBVDataset(utils.Dataset):
         # this. For now this is handled by load image gt
         return fin_pose, class_ids, intrinsic_matrix
 
+def load_YCB_meta_infos(id):
+    home = os.path.expanduser("~")
+    # home = "/media/pohl"
+    path = os.path.join(home, "Hitachi/YCB_Video_Dataset/data/%s-meta.mat" % id)
+    meta = scio.loadmat(path)
+    int_matrix = meta["intrinsic_matrix"]
+    classes = meta["cls_indexes"]
+    depth_factor = meta["factor_depth"]
+    rot_trans_mat = meta["rotation_translation_matrix"]
+    vertmap = meta["vertmap"]
+    poses = meta["poses"]
+    center = meta["center"]
+    return int_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center
+
 ########################################################################################################################
 #                                                      Backbone                                                        #
 ########################################################################################################################
@@ -277,7 +293,7 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
@@ -295,8 +311,9 @@ class YCBVConfig(Config):
     # Number of classes (including background)
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
-    # STEPS_PER_EPOCH = 2
-    TRAIN_ROIS_PER_IMAGE = 100
+    #STEPS_PER_EPOCH = 2
+    TRAIN_ROIS_PER_IMAGE = 50
+    DETECTION_MAX_INSTANCES = 50
     USE_DEPTH_AWARE_OPS = False
 
     LEARNING_RATE = 0.003
@@ -304,6 +321,8 @@ class YCBVConfig(Config):
     ESTIMATE_6D_POSE = True
     POSE_ESTIMATION_METHOD = "pointnet"
     POINTNET_VECTOR_SIZE = 256
+    # MASK_POOL_SIZE = 10
+
     XYZ_MODEL_PATH = os.path.join(os.path.expanduser("~"), "Code/Python/Mask_RCNN/samples/YCB_Video/XYZ_Models.pkl")
     LOSS_WEIGHTS = {
         "rpn_class_loss": 1.,
@@ -421,6 +440,14 @@ aug = iaa.WithChannels(
 #                                                   Evaluation                                                         #
 ########################################################################################################################
 
+def load_classes_id_dict(data_root_path = os.path.expanduser("~/Data/YCB_Video_Dataset/")):
+    path = data_root_path + "image_sets/classes.txt"
+    d = {}
+    with open(path, "r") as f:
+        for i, val in enumerate(f):
+            d[i +1] = val[:-1]
+    return d
+
 def compute_matches(gt_boxes, gt_class_ids, gt_masks,
                     pred_boxes, pred_class_ids, pred_scores, pred_masks,
                     iou_threshold=0.5, score_threshold=0.0):
@@ -525,15 +552,48 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
 
     return mAP, precisions, recalls, overlaps, mask_f1
 
-def evaluate_YCBV(model, dataset, config, eval_type="bbox", limit=0, image_ids=None, plot=False, random=True):
+def compute_pose_error(poses, gt_poses, classes, gt_classes, classes_dict, depth, intrinsic_matrix,
+                       data_root_path=os.path.expanduser("~/Data/YCB_Video_Dataset/")):
+    errors = []
+    for i, id in enumerate(gt_classes):
+        name = classes_dict[id]  # id = 0 is probably background ??
+        gt_pose = gt_poses[:, :, i]
+        gt_pose_dict = {"R": gt_pose[:3, :3], "t": gt_pose[:3, 3:] * 1000}
+        try:
+            j = np.where(classes == id)[0][0]
+        except IndexError:
+            continue
+        pose = poses[j]
+        pose_dict = {"R": pose[:3, :3], "t": pose[:3, 3:] * 1000}
+        ply = o3d.read_triangle_mesh(os.path.join(data_root_path, "models/", name, "textured.ply"))
+        ply.compute_vertex_normals()
+        model = {"pts": np.asarray(ply.vertices) * 1000, "normals": np.asarray(ply.vertex_normals),
+                 "colors": np.asarray(ply.vertex_colors), "faces": np.asarray(ply.triangles)}
+        vsd= pose_error.vsd(pose_dict, gt_pose_dict, model, depth * 1000, 3, 30, intrinsic_matrix)
+        cou = pose_error.cou(pose_dict, gt_pose_dict, model, (640, 480), intrinsic_matrix)
+        errors.append({"vsd": vsd, "cou": cou})
+    return errors
+
+
+def evaluate_YCBV(model, dataset, config, eval_type="bbox",
+                  limit=0, image_ids=None, plot=False, random=True):
     """Runs YCBV evaluation.
         dataset: A Dataset object with valiadtion data
         eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
         limit: if not 0, it's the number of images to use for evaluation
         """
+    from matplotlib.backends.backend_pdf import PdfPages
+    def multipage(filename, figs=None, dpi=200):
+        pp = PdfPages(filename)
+        if figs is None:
+            figs = [plt.figure(n) for n in plt.get_fignums()]
+        for fig in figs:
+            fig.savefig(pp, format='pdf')
+        pp.close()
+    plt.ion()
     # Pick COCO images from the dataset
     image_ids = image_ids or dataset.image_ids
-    # classes_dict = load_classes_id_dict()
+    classes_dict = load_classes_id_dict()
     if random:
         image_ids = np.random.permutation(image_ids)
     # Limit to a subset
@@ -544,45 +604,66 @@ def evaluate_YCBV(model, dataset, config, eval_type="bbox", limit=0, image_ids=N
     t_start = time.time()
 
     results = []
-    APs, precisions, recalls, overlaps, mask_f1s = {}, {}, {}, {}, {}
+    APs, precisions, recalls, overlaps, mask_f1s, p_errors = {}, {}, {}, {}, {}, {}
     # for i, image_id in enumerate(tqdm(image_ids)):
     for i, image_id in enumerate(image_ids):
 
         # Load image
         image = dataset.load_image(image_id)
 
+
+        gt_conf = YCBVConfig()
+        gt_conf.IMAGE_RESIZE_MODE = "none"
+        gt_conf.IMAGE_SHAPE = [480, 640, 4]
+        gt_conf.USE_DEPTH_AWARE_OPS = True
+        gt_conf.MEAN_PIXEL = np.append(config.MEAN_PIXEL, 0.0)
+        gt_conf.IMAGE_CHANNEL_COUNT = 4
+
+        gt_image, gt_image_meta, gt_class_ids, gt_bbox, gt_mask, gt_pose, gt_int_mat = data.load_image_gt(dataset, gt_conf, image_id)
+        # gt_pose = np.transpose(gt_pose, [2, 0, 1])
+        info = dataset.image_info[image_id]
+
         # Run detection
         t = time.time()
-        r = model.detect([image], verbose=0)[0]
+        r = model.detect([gt_image], verbose=0, intrinsic_matrix=[gt_int_mat])[0]
         t_prediction[image_id] = (time.time() - t)
-
-
-        # gt_image, gt_image_meta, gt_class_ids, gt_bbox, gt_mask = modellib.load_image_gt(dataset, config, image_id)
-        gt_image = dataset.load_image(image_id)
-        gt_mask, gt_class_ids = dataset.load_mask(image_id)
-        gt_bbox = utils.extract_bboxes(gt_mask)
+        # intrinsic_matrix, classes, depth_factor, rot_trans_mat, vertmap, poses, center = load_YCB_meta_infos(info["id"])
+        p_errs = compute_pose_error(r["poses"], gt_pose, r["class_ids"],
+                                    gt_class_ids, classes_dict,
+                                    gt_image[:, :, 3], gt_int_mat)
         try:
             AP, precision, recall, overlap, mask_f1 = \
                 compute_ap(gt_bbox, gt_class_ids, gt_mask,
                                  r['rois'], r['class_ids'], r['scores'], r['masks'])
+
         except IndexError:
             print(f"Skipping Image {image_id} because of IndexError")
             continue
         if plot:
+            if not len(overlap):
+                continue
+            visualize.render_predicted_poses(gt_image[:, :, :3], r["poses"], r["class_ids"],
+                                             gt_class_ids, classes_dict, gt_int_mat)
             fig, ax = plt.subplots(1, 2)
-            visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], dataset.class_names, r['scores'], ax=ax[0])
-            visualize.display_instances(gt_image, gt_bbox, gt_mask, gt_class_ids, dataset.class_names,
-                                        ax=ax[1])
+            visualize.display_instances(gt_image[:, :, :3], r['rois'], r['masks'], r['class_ids'],
+                                        dataset.class_names, r['scores'],
+                                        ax=ax[0], intrinsic_matrix=gt_int_mat, poses=r["poses"])
+            visualize.display_instances(gt_image[:, :, :3], gt_bbox, gt_mask, gt_class_ids,
+                                        dataset.class_names, poses=np.transpose(gt_pose, [2, 0, 1]), ax=ax[1],
+                                        intrinsic_matrix=gt_int_mat)
             fig.tight_layout(pad=0)
             fig.subplots_adjust(wspace=0)
             plt.show()
             visualize.plot_overlaps(gt_class_ids, r['class_ids'], r['scores'],
                                     overlap, dataset.class_names, threshold=config.DETECTION_MIN_CONFIDENCE)
+            multipage(os.path.expanduser("~/Code/Python/Mask_RCNN/evaluation/" + str(image_id) + ".pdf"))
+            plt.close("all")
         APs[image_id] = AP
         precisions[image_id] = precision
         recalls[image_id] = recall
         overlaps[image_id] = overlap
         mask_f1s[image_id] = np.mean(mask_f1[mask_f1 > -1])
+        p_errors[image_id] = p_errs
     result = pd.DataFrame(data={"mAPs": APs, "mF1s": mask_f1s, "recall": recalls, "precision": precisions,
                                 "overlap": overlaps, "times": t_prediction})
     mAP = result["mAPs"].mean()
@@ -692,6 +773,14 @@ if __name__ == '__main__':
             config.IMAGE_CHANNEL_COUNT = 4
         else:
             assert config.USE_DEPTH_AWARE_OPS == False
+    elif args.command == "evaluate":
+        config = YCBVConfig()
+        if args.depth_aware:
+            config.USE_DEPTH_AWARE_OPS = True
+            config.MEAN_PIXEL = np.append(config.MEAN_PIXEL, 0.0)
+            config.IMAGE_CHANNEL_COUNT = 4
+        else:
+            assert config.USE_DEPTH_AWARE_OPS == False
     else:
         class InferenceConfig(YCBVConfig):
             # Set batch size to 1 since we'll be running inference on
@@ -735,6 +824,12 @@ if __name__ == '__main__':
                 "mrcnn_class_logits", "mrcnn_bbox_fc",
                 "mrcnn_bbox", "mrcnn_mask"], continue_training=args.continue_training)
         else:
+            #, exclude=["mrcnn_pointnet_rot_conv1",
+                                                                  # "mrcnn_pointnet_rot_conv4",
+                                                                  # "mrcnn_pointnet_rot_conv5",
+                                                                  # "mrcnn_pointnet_rot_fc1",
+                                                                  # "mrcnn_pointnet_rot_fc2",
+                                                                  # "mrcnn_pointnet_rot_fc3"]
             model.load_weights(model_path, by_name=True, continue_training=args.continue_training)
     else:
         print("Training from scratch")
@@ -865,7 +960,7 @@ if __name__ == '__main__':
         dataset_val.prepare()
         num = args.limit or len(dataset_val.image_ids)
         print(f"Running YCBV evaluation on {num} images.")
-        result = evaluate_YCBV(model, dataset_val, config, "bbox", limit=int(args.limit), plot=False)
+        result = evaluate_YCBV(model, dataset_val, config, "bbox", limit=int(args.limit), plot=True)
         result.to_pickle(model_path[:-3] + "_eval.pkl")
     elif args.command == "blub":
         dataset_train = YCBVDataset()
