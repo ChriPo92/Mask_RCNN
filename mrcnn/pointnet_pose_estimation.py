@@ -174,7 +174,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # x = KL.BatchNormalization(name=f'mrcnn_pointnet_{name}_bn3')(x, training=train_bn)
     #
     # x = KL.Activation('relu')(x)
-    # transform to [batch, num_classes, num_points, num_rois, 128]
+    # transform to [batch * num_classes, num_points, num_rois, 128]
     x = KL.Conv2D(128, (1, 1), padding="valid",
                   name=f"mrcnn_pointnet_{name}_conv4")(x)
     x = KL.BatchNormalization(
@@ -391,7 +391,7 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
 
         Returns: Trans [[batch, num_rois, 3, 1, num_classes]
         """
-    num_points = 200
+    num_points = 150
     # TODO: as it seems, TRAIN_ROIS_PER_IMAGE (200) becomes DETECTION_MAX_INSTANCES (100) for inference
     # ROIAlign returning [batch, num_rois, 24, 24, channels] so that in the end a 4x4 matrix
     # is predicted for every class

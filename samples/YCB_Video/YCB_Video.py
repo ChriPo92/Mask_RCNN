@@ -42,7 +42,7 @@ import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
 import matplotlib.pyplot as plt
 import tensorflow as tf
-import open3d as o3d
+#import open3d as o3d
 import obj_pose_eval.pose_error as pose_error
 
 DCKL = da_conv.keras_layers
@@ -293,7 +293,7 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 2
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then
@@ -312,8 +312,8 @@ class YCBVConfig(Config):
     NUM_CLASSES = 1 + 21  # 21 Objects were selected from the original YCB Dataset
 
     #STEPS_PER_EPOCH = 2
-    TRAIN_ROIS_PER_IMAGE = 50
-    DETECTION_MAX_INSTANCES = 50
+    TRAIN_ROIS_PER_IMAGE = 100
+    DETECTION_MAX_INSTANCES = 100
     USE_DEPTH_AWARE_OPS = False
 
     LEARNING_RATE = 0.003

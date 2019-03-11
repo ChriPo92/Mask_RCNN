@@ -261,7 +261,7 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     #                         name="mrcnn_pose_loss/rot_error")([y_true_r, y_pred_r])
     # [pos_ix]
     rot_trace = KL.Lambda(lambda y: tf.linalg.trace(tf.matmul(y[0], tf.linalg.inv(y[1]))),
-                          name="mrcnn_pose_loss/rot_trace")([y_pred_r, y_true_r])
+                          name="mrcnn_pose_loss/rot_trace")([y_pred_svd_r, y_true_r])
     rot_loss = KL.Lambda(lambda y: tf.reduce_mean(
         tf.math.acos(
             tf.clip_by_value(

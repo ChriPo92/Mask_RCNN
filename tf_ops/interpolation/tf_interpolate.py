@@ -62,7 +62,7 @@ def kNN(xyz1, xyz2, k):
     txyz2 = tf.tile(xyz2_t, [1, 1, n, 1])
     squared_diff = tf.squared_difference(xyz1, txyz2)
     squared_dist = tf.reduce_sum(squared_diff, axis=-1)
-    dist = tf.sqrt(squared_dist)
+    dist = tf.sqrt(tf.maximum(squared_dist, 0))
     # if there are less points in xyz2 then k, top_k does not work
     k_min = tf.minimum(k, m)
     # [b, n, k_min], [b, n, k_min]

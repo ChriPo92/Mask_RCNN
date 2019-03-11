@@ -15,7 +15,7 @@ import colorsys
 import cv2
 import matplotlib
 ## solves the BadWindow Error of Matplotlib
-matplotlib.use('Qt5Agg')
+#matplotlib.use('Qt5Agg')
 
 
 import numpy as np
