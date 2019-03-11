@@ -200,19 +200,19 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # but all rois have the same weights
     # x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
     #                                        config.NUM_CLASSES, vector_size)))(x)
-    # transform to [batch * num_rois, num_classes, 256]
+    # transform to [batch, num_rois, num_classes, 256]
     x = Dense2D(config.NUM_CLASSES, 256,
                  name=f"mrcnn_pointnet_{name}_fc1")(x)
     x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # transform to [batch * num_rois, num_classes, 128]
+    # transform to [batch, num_rois, num_classes, 128]
     x = Dense2D(config.NUM_CLASSES, 128,
                  name=f"mrcnn_pointnet_{name}_fc2")(x)
     x = KL.BatchNormalization(
         name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # [batch * num_rois, num_classes, out_number]
+    # [batch, num_rois, num_classes, out_number]
     x = Dense2D(config.NUM_CLASSES, out_number,
                  name=f"mrcnn_pointnet_{name}_fc3")(x)
     # x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
@@ -951,7 +951,14 @@ class Dense2D(KL.Layer):
         self.built = True
 
     def call(self, inputs, **kwargs):
-        output = tf.tensordot(inputs, self.kernel, axes=[[-2, -1], [0, 1]])
+        """
+
+        :param inputs (tf.Tensor): [batch, num_rois, in_classes, in_units]
+        :param kwargs:
+        :return:
+        """
+        output = tf.einsum("ijkl,klmn->ijmn", inputs, self.kernel)
+        # output = tf.tensordot(inputs, self.kernel, axes=[[-2, -1], [0, 1]])
         if self.use_bias:
             output = tf.add(output, self.bias)
         if self.activation is not None:
