@@ -937,7 +937,7 @@ class Dense2D(KL.Layer):
         self.kernel_constraint = KC.get(kernel_constraint)
         self.bias_constraint = KC.get(bias_constraint)
         self.input_spec = KE.base_layer.InputSpec(min_ndim=2)
-        self.supports_masking = True
+        # self.supports_masking = True
 
     def build(self, input_shape):
         assert len(input_shape) >= 3
@@ -975,21 +975,5 @@ class Dense2D(KL.Layer):
         assert input_shape[-1]
         output_shape = list(input_shape)
         output_shape[-1] = self.units
+        output_shape[-2] = self.classes
         return tuple(output_shape)
-
-    def get_config(self):
-        config = {
-            'units': self.units,
-            'activation': KA.serialize(self.activation),
-            'use_bias': self.use_bias,
-            'kernel_initializer': KI.serialize(self.kernel_initializer),
-            'bias_initializer': KI.serialize(self.bias_initializer),
-            'kernel_regularizer': KR.serialize(self.kernel_regularizer),
-            'bias_regularizer': KR.serialize(self.bias_regularizer),
-            'activity_regularizer':
-                KR.serialize(self.activity_regularizer),
-            'kernel_constraint': KC.serialize(self.kernel_constraint),
-            'bias_constraint': KC.serialize(self.bias_constraint)
-        }
-        base_config = super(Dense2D, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
