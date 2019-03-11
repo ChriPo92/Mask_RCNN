@@ -285,8 +285,9 @@ def mrcnn_pose_loss_graph_keras(target_poses, target_class_ids, pred_trans, pred
     total_loss = KL.Lambda(lambda y: y[0] + y[1],
                            name="mrcnn_pose_loss/total_loss")([chamfer_loss, rot_loss])
     trans_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/trans_loss")(trans_loss)
-    rot_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/rot_loss")(total_loss)
-    return trans_loss, rot_loss
+    rot_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/rot_loss")(rot_loss)
+    chamfer_loss = KL.Lambda(lambda y: tf.identity(y), name="mrcnn_pose_loss/chamfer_loss")
+    return trans_loss, rot_loss, chamfer_loss
 
 
 def mrcnn_pose_loss_model(classes=22, rois=200, N=2640):

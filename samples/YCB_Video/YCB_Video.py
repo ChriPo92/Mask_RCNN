@@ -331,7 +331,8 @@ class YCBVConfig(Config):
         "mrcnn_bbox_loss": 1.,
         "mrcnn_mask_loss": 1.,
         "mrcnn_pose_loss/trans_loss": 1000.,
-        "mrcnn_pose_loss/rot_loss": 500.
+        "mrcnn_pose_loss/rot_loss": 50.,
+        "mrcnn_pose_loss/chamfer_loss": 500.
     }
     #MASK_POOL_SIZE = 10
 
