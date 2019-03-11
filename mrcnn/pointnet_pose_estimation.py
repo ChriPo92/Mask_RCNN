@@ -583,6 +583,7 @@ class MultiScaleGroupingSetAbstractionLayer(KL.Layer):
                 num_in_channels = num_out_channel
             self.kernel.append(kernels)
             self.bias.append(bias)
+        self.built = True
 
     def compute_output_shape(self, input_shape):
         batch = input_shape[0]
@@ -691,6 +692,7 @@ class SetAbstractionLayer(KL.Layer):
             self.kernel.append(k)
             self.bias.append(b)
             num_in_channels = num_out_channel
+        self.built = True
 
     def compute_output_shape(self, input_shape):
         batch = input_shape[0]
@@ -773,6 +775,7 @@ class FeaturePropagationLayer(KL.Layer):
             self.kernel.append(k)
             self.bias.append(b)
             num_in_channels = num_out_channel
+        self.built = True
 
     def compute_output_shape(self, input_shape):
         xyz1_shape = input_shape[0]
@@ -886,13 +889,6 @@ class Dense2D(KL.Layer):
     def __init__(self, classes, units,
                  activation=None,
                  use_bias=True,
-                 kernel_initializer='glorot_uniform',
-                 bias_initializer='zeros',
-                 kernel_regularizer=None,
-                 bias_regularizer=None,
-                 activity_regularizer=None,
-                 kernel_constraint=None,
-                 bias_constraint=None,
                  **kwargs):
         """
         2 dimensionsional densely connected Layer
@@ -922,40 +918,32 @@ class Dense2D(KL.Layer):
         :param kwargs:
         :type kwargs:
         """
-        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
-            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
         super(Dense2D, self).__init__(**kwargs)
         self.units = units
         self.classes = classes
         self.activation = KA.get(activation)
         self.use_bias = use_bias
-        self.kernel_initializer = KI.get(kernel_initializer)
-        self.bias_initializer = KI.get(bias_initializer)
-        self.kernel_regularizer = KR.get(kernel_regularizer)
-        self.bias_regularizer = KR.get(bias_regularizer)
-        self.activity_regularizer = KR.get(activity_regularizer)
-        self.kernel_constraint = KC.get(kernel_constraint)
-        self.bias_constraint = KC.get(bias_constraint)
-        self.input_spec = KE.base_layer.InputSpec(min_ndim=2)
+        self.input_spec = KE.base_layer.InputSpec(min_ndim=3)
         # self.supports_masking = True
 
     def build(self, input_shape):
         assert len(input_shape) >= 3
         input_units = input_shape[-1]
         input_classes = input_shape[-2]
+        xavier_init = KI.glorot_uniform()
+        zero_init = KI.zeros()
+        regularizer = KR.l2()
 
         self.kernel = self.add_weight(shape=(input_classes, input_units,
                                              self.classes, self.units),
-                                      initializer=self.kernel_initializer,
+                                      initializer=xavier_init, trainable=True,
                                       name='kernel',
-                                      regularizer=self.kernel_regularizer,
-                                      constraint=self.kernel_constraint)
+                                      regularizer=regularizer, dtype=tf.float32)
         if self.use_bias:
             self.bias = self.add_weight(shape=(self.classes, self.units),
-                                        initializer=self.bias_initializer,
+                                        initializer=zero_init, trainable=True,
                                         name='bias',
-                                        regularizer=self.bias_regularizer,
-                                        constraint=self.bias_constraint)
+                                        regularizer=None, dtype=tf.float32)
         else:
             self.bias = None
         self.input_spec = KE.base_layer.InputSpec(min_ndim=3, axes={-2: input_classes,
