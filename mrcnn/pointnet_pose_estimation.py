@@ -2,6 +2,8 @@ import keras.layers as KL
 import keras.engine as KE
 import keras.initializers as KI
 import keras.regularizers as KR
+import keras.activations as KA
+import keras.constraints as KC
 import tensorflow as tf
 
 from utils import utils, keras_util, tf_util
@@ -199,19 +201,19 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE,
     #                                        config.NUM_CLASSES, vector_size)))(x)
     # transform to [batch * num_rois, num_classes, 256]
-    x = KL.Dense(256,
+    x = Dense2D(config.NUM_CLASSES, 256,
                  name=f"mrcnn_pointnet_{name}_fc1")(x)
     x = KL.BatchNormalization(
                            name=f'mrcnn_pointnet_{name}_bn6')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # transform to [batch * num_rois, num_classes, 128]
-    x = KL.Dense(128,
+    x = Dense2D(config.NUM_CLASSES, 128,
                  name=f"mrcnn_pointnet_{name}_fc2")(x)
     x = KL.BatchNormalization(
         name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     # [batch * num_rois, num_classes, out_number]
-    x = KL.Dense(out_number,
+    x = Dense2D(config.NUM_CLASSES, out_number,
                  name=f"mrcnn_pointnet_{name}_fc3")(x)
     # x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
     #                                        config.NUM_CLASSES, out_number)))(x)
@@ -877,3 +879,117 @@ def build_PointNet2_Regr_Graph(point_cloud_tensor, num_points, config, train_bn,
     x = KL.TimeDistributed(KL.Dense(out_number, activation=last_activation),
                                name=f"mrcnn_pointnet_{name}_fc3")(x)
     return x
+
+
+class Dense2D(KL.Layer):
+
+    def __init__(self, classes, units,
+                 activation=None,
+                 use_bias=True,
+                 kernel_initializer='glorot_uniform',
+                 bias_initializer='zeros',
+                 kernel_regularizer=None,
+                 bias_regularizer=None,
+                 activity_regularizer=None,
+                 kernel_constraint=None,
+                 bias_constraint=None,
+                 **kwargs):
+        """
+        2 dimensionsional densely connected Layer
+
+        :param units: Number of Output Units in the Layer (Last Dimension of the Output)
+        :type units: int
+        :param classes: Number of Output Classes in the Layer (2nd to Last Dimension of the Output)
+        :type classes: int
+        :param activation: Name of a Keras Activation Function
+        :type activation: str
+        :param use_bias: If True, add bias to the output of the Layer
+        :type use_bias: bool
+        :param kernel_initializer:
+        :type kernel_initializer: str
+        :param bias_initializer:
+        :type bias_initializer: str
+        :param kernel_regularizer:
+        :type kernel_regularizer: str
+        :param bias_regularizer:
+        :type bias_regularizer: str
+        :param activity_regularizer:
+        :type activity_regularizer: str
+        :param kernel_constraint:
+        :type kernel_constraint: str
+        :param bias_constraint:
+        :type bias_constraint: str,
+        :param kwargs:
+        :type kwargs:
+        """
+        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
+            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
+        super(Dense2D, self).__init__(**kwargs)
+        self.units = units
+        self.classes = classes
+        self.activation = KA.get(activation)
+        self.use_bias = use_bias
+        self.kernel_initializer = KI.get(kernel_initializer)
+        self.bias_initializer = KI.get(bias_initializer)
+        self.kernel_regularizer = KR.get(kernel_regularizer)
+        self.bias_regularizer = KR.get(bias_regularizer)
+        self.activity_regularizer = KR.get(activity_regularizer)
+        self.kernel_constraint = KC.get(kernel_constraint)
+        self.bias_constraint = KC.get(bias_constraint)
+        self.input_spec = KE.base_layer.InputSpec(min_ndim=2)
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        assert len(input_shape) >= 3
+        input_units = input_shape[-1]
+        input_classes = input_shape[-2]
+
+        self.kernel = self.add_weight(shape=(input_classes, input_units,
+                                             self.classes, self.units),
+                                      initializer=self.kernel_initializer,
+                                      name='kernel',
+                                      regularizer=self.kernel_regularizer,
+                                      constraint=self.kernel_constraint)
+        if self.use_bias:
+            self.bias = self.add_weight(shape=(self.classes, self.units),
+                                        initializer=self.bias_initializer,
+                                        name='bias',
+                                        regularizer=self.bias_regularizer,
+                                        constraint=self.bias_constraint)
+        else:
+            self.bias = None
+        self.input_spec = KE.base_layer.InputSpec(min_ndim=3, axes={-2: input_classes,
+                                                                    -1: input_units})
+        self.built = True
+
+    def call(self, inputs, **kwargs):
+        output = tf.tensordot(inputs, self.kernel, axes=[[-2, -1], [0, 1]])
+        if self.use_bias:
+            output = tf.add(output, self.bias)
+        if self.activation is not None:
+            output = self.activation(output)
+        return output
+
+    def compute_output_shape(self, input_shape):
+        assert input_shape and len(input_shape) >= 3
+        assert input_shape[-1]
+        output_shape = list(input_shape)
+        output_shape[-1] = self.units
+        return tuple(output_shape)
+
+    def get_config(self):
+        config = {
+            'units': self.units,
+            'activation': KA.serialize(self.activation),
+            'use_bias': self.use_bias,
+            'kernel_initializer': KI.serialize(self.kernel_initializer),
+            'bias_initializer': KI.serialize(self.bias_initializer),
+            'kernel_regularizer': KR.serialize(self.kernel_regularizer),
+            'bias_regularizer': KR.serialize(self.bias_regularizer),
+            'activity_regularizer':
+                KR.serialize(self.activity_regularizer),
+            'kernel_constraint': KC.serialize(self.kernel_constraint),
+            'bias_constraint': KC.serialize(self.bias_constraint)
+        }
+        base_config = super(Dense2D, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
