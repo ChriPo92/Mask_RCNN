@@ -4,6 +4,7 @@ import keras.initializers as KI
 import keras.regularizers as KR
 import keras.activations as KA
 import keras.constraints as KC
+import keras.backend as KB
 import tensorflow as tf
 
 from utils import utils, keras_util, tf_util
@@ -934,13 +935,13 @@ class Dense2D(KL.Layer):
         zero_init = KI.zeros()
         regularizer = KR.l2()
 
-        self.kernel = self.add_weight(shape=(input_classes, input_units,
-                                             self.classes, self.units),
+        self.kernel = self.add_weight(shape=(input_classes * input_units,
+                                             self.classes * self.units),
                                       initializer=xavier_init, trainable=True,
                                       name='kernel',
                                       regularizer=regularizer, dtype=tf.float32)
         if self.use_bias:
-            self.bias = self.add_weight(shape=(self.classes, self.units),
+            self.bias = self.add_weight(shape=(self.classes * self.units),
                                         initializer=zero_init, trainable=True,
                                         name='bias',
                                         regularizer=None, dtype=tf.float32)
@@ -957,12 +958,18 @@ class Dense2D(KL.Layer):
         :param kwargs:
         :return:
         """
-        output = tf.einsum("ijkl,klmn->ijmn", inputs, self.kernel)
+        inp_shape = tf.shape(inputs)
+        inputs = tf.reshape(inputs, [inp_shape[0], inp_shape[1], inp_shape[2]*inp_shape[3]])
+        output = KB.dot(inputs, self.kernel)
+        # output = tf.einsum("ijkl,klmn->ijmn", inputs, self.kernel)
         # output = tf.tensordot(inputs, self.kernel, axes=[[-2, -1], [0, 1]])
+
         if self.use_bias:
-            output = tf.add(output, self.bias)
+            # output = tf.add(output, self.bias)
+            KB.bias_add(output, self.bias, data_format='channels_last')
         if self.activation is not None:
             output = self.activation(output)
+        output = tf.reshape(output, [inp_shape[0], inp_shape[1], self.classes, self.units])
         return output
 
     def compute_output_shape(self, input_shape):
