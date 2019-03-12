@@ -941,7 +941,7 @@ class Dense2D(KL.Layer):
                                       name='kernel',
                                       regularizer=regularizer, dtype=tf.float32)
         if self.use_bias:
-            self.bias = self.add_weight(shape=(self.classes * self.units),
+            self.bias = self.add_weight(shape=(self.classes * self.units, ),
                                         initializer=zero_init, trainable=True,
                                         name='bias',
                                         regularizer=None, dtype=tf.float32)
