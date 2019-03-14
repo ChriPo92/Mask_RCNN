@@ -158,10 +158,10 @@ class MaskRCNN():
         # Don't create the thead (stage 5), so we pick the 4th item in the list.
         if callable(config.BACKBONE):
             _, C2, C3, C4, C5 = config.BACKBONE(input_image, stage5=True,
-                                                train_bn=config.TRAIN_BN, depth_image=input_depth)
+                                                train_bn=config.TRAIN_BN, depth_image=None)
         else:
             _, C2, C3, C4, C5 = ku.resnet_graph(input_image, config.BACKBONE,
-                                             stage5=True, train_bn=config.TRAIN_BN, depth_image=input_depth)
+                                             stage5=True, train_bn=config.TRAIN_BN, depth_image=None)
         # Top-down Layers
         # TODO: add assert to varify feature map sizes match what's in config
         # All layers are cast to TOP_DOWN_PYRAMID_SIZE channels
