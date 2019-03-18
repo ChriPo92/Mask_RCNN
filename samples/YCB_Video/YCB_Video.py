@@ -54,7 +54,7 @@ ROOT_DIR = os.path.abspath("../../")
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
-from mrcnn import model as modellib, visualize, data_generation as data
+from mrcnn import model as modellib, data_generation as data#, visualize
 from utils import utils
 
 # Path to trained weights file
