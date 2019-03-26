@@ -42,7 +42,7 @@ import depth_aware_operations.da_convolution as da_conv
 import depth_aware_operations.da_avg_pooling as da_avg_pool
 import matplotlib.pyplot as plt
 import tensorflow as tf
-#import open3d as o3d
+import open3d as o3d
 import obj_pose_eval.pose_error as pose_error
 
 DCKL = da_conv.keras_layers
@@ -54,7 +54,7 @@ ROOT_DIR = os.path.abspath("../../")
 # Import Mask RCNN
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
-from mrcnn import model as modellib, data_generation as data#, visualize
+from mrcnn import model as modellib, data_generation as data, visualize
 from utils import utils
 
 # Path to trained weights file
@@ -293,7 +293,7 @@ class YCBVConfig(Config):
 
     # We use a GPU with 12GB memory, which can fit two images.
     # Adjust down if you use a smaller GPU.
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
     # do not resize the images, as they are all the same size
     # TODO: Apparently, something goes pretty wrong when IMAGE_RESIZE_MODE is none; mrcnn_bbox_loss and mrcnn_mask_loss
     # are always zero then

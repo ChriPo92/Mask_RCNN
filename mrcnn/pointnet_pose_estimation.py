@@ -460,21 +460,21 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
                             1, 3, 1), name="trans_preshape")(trans)
         # [batch, num_rois, num_classes, num_points, (x, y, z)]
-        pcl_list = KL.Lambda(lambda y: y[:, :, :, :, :3])(concat_point_cloud)
-        feature_list = KL.Lambda(lambda y: y[:, :, :, :, 3:])(concat_point_cloud)
-        # pcl_list = KL.Subtract()([pcl_list, trans])
-        pcl_list = KL.Lambda(lambda y: tf.where(
-            tf.tile( # tile to [batch, num_rois, num_classes, num_points, 3, 1]
-                tf.expand_dims( # expand to [batch, num_rois, num_classes, num_points, 1, 1]
-                    tf.reduce_all(tf.equal(y[0], 0), axis=-2), axis=-2
-                ), [1, 1, 1, 1, 3, 1]
-            ), y[0], y[0] - y[1])
-                             )([pcl_list, trans])
-        concat_point_cloud = KL.Lambda(lambda y: tf.stop_gradient(tf.concat(y, axis=-2)),
-                                       name="centered_concat_point_clouds")([pcl_list, feature_list])
+        # pcl_list = KL.Lambda(lambda y: y[:, :, :, :, :3])(concat_point_cloud)
+        # feature_list = KL.Lambda(lambda y: y[:, :, :, :, 3:])(concat_point_cloud)
+        # # pcl_list = KL.Subtract()([pcl_list, trans])
+        # pcl_list = KL.Lambda(lambda y: tf.where(
+        #     tf.tile( # tile to [batch, num_rois, num_classes, num_points, 3, 1]
+        #         tf.expand_dims( # expand to [batch, num_rois, num_classes, num_points, 1, 1]
+        #             tf.reduce_all(tf.equal(y[0], 0), axis=-2), axis=-2
+        #         ), [1, 1, 1, 1, 3, 1]
+        #     ), y[0], y[0] - y[1])
+        #                      )([pcl_list, trans])
+        # concat_point_cloud = KL.Lambda(lambda y: tf.stop_gradient(tf.concat(y, axis=-2)),
+        #                                name="centered_concat_point_clouds")([pcl_list, feature_list])
         # [batch, num_rois, num_classes, 6]
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
-                                         train_bn, "rot", 7, 9,
+                                         train_bn, "rot", 7, 6,
                                          last_activation="linear",
                                          vector_size=int(1.0*config.POINTNET_VECTOR_SIZE))
 
@@ -482,12 +482,12 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
     trans = KL.Lambda(lambda y: tf.transpose(tf.squeeze(y, axis=3), [0, 1, 3, 4, 2]), name="trans_reshape")(trans)
     # [batch, num_rois, num_classes, 3, 2]
     rot = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
-                     3, 3), name="rot_reshape")(rot)
+                     3, 2), name="rot_reshape")(rot)
     # [batch, num_rois, 3, 2, num_classes]
     rot = KL.Lambda(lambda y: tf.transpose(y, [0, 1, 3, 4, 2]))(rot)
     # [batch, num_rois, 3, 3, num_classes]; uses orthogonality of rotation matrices to calc
     # the third column vector
-    #rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
+    rot = CalcRotMatrix(name="CalcRotMatrix", config=config)(rot)
 
     # print_op = tf.print([tf.shape(feature_list), tf.shape(pcl_list), tf.shape(point_cloud_repr),
     #                      tf.shape(x), tf.shape(shared), rot, trans])
