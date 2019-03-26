@@ -318,7 +318,7 @@ class YCBVConfig(Config):
 
     LEARNING_RATE = 0.003
     GRADIENT_CLIP_NORM = 5.0
-    ESTIMATE_6D_POSE = True
+    ESTIMATE_6D_POSE = False
     POSE_ESTIMATION_METHOD = "pointnet"
     POINTNET_VECTOR_SIZE = 256
     # MASK_POOL_SIZE = 10
@@ -895,24 +895,24 @@ if __name__ == '__main__':
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
-        num += 100
-        layers = "heads"
+        num += 40
+        layers = "4+"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE / 30.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
         num += 50
-        layers = "heads"
+        layers = "4+"
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 60.,
+                    learning_rate=config.LEARNING_RATE / 30.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)
         num += 50
-        layers = "heads"
+        layers = "all"
         model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 100.,
+                    learning_rate=config.LEARNING_RATE / 50.,
                     epochs=num,
                     layers=layers,
                     augmentation=augmentation)

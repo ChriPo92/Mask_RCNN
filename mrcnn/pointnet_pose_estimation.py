@@ -199,11 +199,13 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # TODO: this is not actually the case. Weights are the same for all classes
     # transform to [batch * num_rois, num_classes, vector_size] so that all classes have their own weigths,
     # but all rois have the same weights
+    # TODO: Do a ResNet approach, but not with Class * Units, but a transposed version that is a dense layer for the
+    # classes only
     unit_multiplicator = 1
-    # if name is "rot":
-    #     x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE , config.TRAIN_ROIS_PER_IMAGE,
-    #                                            config.NUM_CLASSES * vector_size)))(x)
-    #     unit_multiplicator = config.NUM_CLASSES
+    if name is "rot":
+        x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE , config.TRAIN_ROIS_PER_IMAGE,
+                                               config.NUM_CLASSES * vector_size)))(x)
+        unit_multiplicator = config.NUM_CLASSES
     # transform to [batch, num_rois, num_classes, 256]
     x = KL.Dense(unit_multiplicator * 256,
                  name=f"mrcnn_pointnet_{name}_fc1")(x)
@@ -216,28 +218,12 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     x = KL.BatchNormalization(
         name=f'mrcnn_pointnet_{name}_bn7')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    x_res = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
-                                          config.NUM_CLASSES * 128)))(x)
-    unit_multiplicator = config.NUM_CLASSES
     # [batch, num_rois, num_classes, out_number]
-    x_res = KL.Dense(unit_multiplicator * out_number,
-                 name=f"mrcnn_pointnet_{name}_fc3_res")(x_res)
-    x_res = KL.BatchNormalization(
-        name=f'mrcnn_pointnet_{name}_bn8')(x_res, training=train_bn)
-    x_res = KL.Activation('relu')(x_res)
-    x_res = KL.Dense(unit_multiplicator * out_number,
-                     name=f"mrcnn_pointnet_{name}_fc3_res2")(x_res)
-    x_res = KL.BatchNormalization(
-        name=f'mrcnn_pointnet_{name}_bn9')(x_res, training=train_bn)
-    # if name is "rot":
-    x_res = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
-                                           config.NUM_CLASSES, out_number)))(x_res)
-    x_res = KL.BatchNormalization(
-        name=f'mrcnn_pointnet_{name}_bn10')(x_res, training=train_bn)
-    x = KL.Dense(out_number, name=f"mrcnn_pointnet_{name}_fc3")(x)
-    x = KL.BatchNormalization(
-        name=f'mrcnn_pointnet_{name}_bn11')(x, training=train_bn)
-    x = KL.Add()([x, x_res])
+    x = KL.Dense(unit_multiplicator * out_number,
+                 name=f"mrcnn_pointnet_{name}_fc3")(x)
+    if name is "rot":
+        x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
+                                               config.NUM_CLASSES, out_number)))(x)
     return x
 
 class CalcRotMatrix(KL.Layer):
