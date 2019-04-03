@@ -817,7 +817,7 @@ class MaskRCNN():
             # https://mathoverflow.net/questions/86539/closest-3d-rotation-matrix-in-the-frobenius-norm-sense
             u, s, vh = np.linalg.svd(f_rots)
             r = np.matmul(u, vh)
-            pre_poses = np.concatenate((r, f_trans), axis=2)
+            pre_poses = np.concatenate((f_rots, f_trans), axis=2)
             shape = pre_poses.shape
             # add row to each pose containing [0, 0, 0, 1]
             poses = np.concatenate((pre_poses, np.tile([0, 0, 0, 1], (shape[0], 1, 1))), axis=1)

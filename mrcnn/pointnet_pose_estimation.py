@@ -129,7 +129,7 @@ class FeaturePointCloud(KE.Layer):
         return output_shape
 
 def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
-                               name, in_features, out_number, last_activation="linear", vector_size=1024):
+                               name, in_features, out_number, num_classes, last_activation="linear", vector_size=1024):
     """
 
     :param point_cloud_tensor: [batch, num_rois, classes, num_points, 7, 1]
@@ -146,7 +146,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # point_cloud_tensor = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, -1, num_points,
     #                                                         7, 1)))(point_cloud_tensor)
     # transform to [batch, num_rois * num_classes, num_points, 6, 16]
-    class_partials = []
+    # class_partials = []
     # we don't want to use TimeDistributed here, since it uses the same weights for each
     # temporal slice. Therefore we switch to a for loop, which is not a perfect solution.
     # The rois are handled as seperate columns of an "image", where only the columns belonging
@@ -156,7 +156,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # partial_point_cloud = KL.Lambda(lambda y: y[:, :, j, :, :])(point_cloud_tensor)
     # transpose to [batch, num_classes, num_points, num_rois, in_features, 1] and reshape to [batch, num_classes, num_points, num_rois * in_features, 1]
     partial_point_cloud = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 3, 1, 4, 5]),
-                                                         (config.BATCH_SIZE * config.NUM_CLASSES, num_points,
+                                                         (config.BATCH_SIZE * num_classes, num_points,
                                                           config.TRAIN_ROIS_PER_IMAGE * in_features, 1)))(point_cloud_tensor)
     # transform to [batch * num_classes, num_points, num_rois, 64]
     x = KL.Conv2D(64, (1, in_features), strides=(1, in_features), padding="valid",
@@ -193,7 +193,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     # transform to [batch, num_classes, num_rois, vector_size]
     # and transpose to [batch, num_rois, num_classes, vector_size]
     x = KL.Lambda(lambda y: tf.transpose(tf.reshape(y, (config.BATCH_SIZE,
-                                                        config.NUM_CLASSES,
+                                                        num_classes,
                                                         config.TRAIN_ROIS_PER_IMAGE,
                                                         vector_size)), [0, 2, 1, 3]))(x)
     # TODO: this is not actually the case. Weights are the same for all classes
@@ -204,8 +204,8 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
     unit_multiplicator = 1
     if name is "rot":
         x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE , config.TRAIN_ROIS_PER_IMAGE,
-                                               config.NUM_CLASSES * vector_size)))(x)
-        unit_multiplicator = config.NUM_CLASSES
+                                               num_classes * vector_size)))(x)
+        unit_multiplicator = num_classes
     # transform to [batch, num_rois, num_classes, 256]
     x = KL.Dense(unit_multiplicator * 256,
                  name=f"mrcnn_pointnet_{name}_fc1")(x)
@@ -223,7 +223,7 @@ def build_PointNet_Keras_Graph(point_cloud_tensor, num_points, config, train_bn,
                  name=f"mrcnn_pointnet_{name}_fc3")(x)
     if name is "rot":
         x = KL.Lambda(lambda y: tf.reshape(y, (config.BATCH_SIZE, config.TRAIN_ROIS_PER_IMAGE,
-                                               config.NUM_CLASSES, out_number)))(x)
+                                               num_classes, out_number)))(x)
     return x
 
 class CalcRotMatrix(KL.Layer):
@@ -288,9 +288,10 @@ class CalcRotMatrix(KL.Layer):
 
 class SamplePointsFromMaskedRegion(KL.Layer):
 
-    def __init__(self, num_points, **kwargs):
+    def __init__(self, num_points, seperate_features=False, **kwargs):
         super(SamplePointsFromMaskedRegion, self).__init__(**kwargs)
         self.num_points = num_points
+        self.sep_feat = seperate_features
 
     def call(self, inputs, **kwargs):
         """
@@ -302,7 +303,10 @@ class SamplePointsFromMaskedRegion(KL.Layer):
         :param kwargs:
         :return: [batch, num_rois, num_classes, num_points, 7, 1]
         """
-        xyz, features, masks = inputs
+        if self.sep_feat:
+            xyz, features, masks = inputs
+        else:
+            xyz, masks = inputs
         shape = tf.shape(masks)
         batch = shape[0]
         num_rois = shape[1]
@@ -337,10 +341,11 @@ class SamplePointsFromMaskedRegion(KL.Layer):
         zero_depth_mask = tf.where(tiled_xyz[:, :, :, :, 2] > 0.0, tf.ones_like(masks), tf.zeros_like(masks))
         # transpose to [batch, num_rois, num_classes, pool_size², 3]
         tiled_xyz = tf.transpose(tiled_xyz, [0, 1, 3, 2, 4])
-        # [batch, num_rois, pool_size², x, num_classes] -> [batch, num_rois, pool_size², num_classes, 4]
-        tiled_features = tf.transpose(tf.tile(features, [1, 1, 1, 1, num_classes]), [0, 1, 2, 4, 3])
-        # shuffle same way as bool_masks and transpose to [batch, num_rois, num_classes, pool_size², 4]
-        tiled_features = tf.transpose(tf.gather_nd(tiled_features, shuffle_idx), [0, 1, 3, 2, 4])
+        if self.sep_feat:
+            # [batch, num_rois, pool_size², x, num_classes] -> [batch, num_rois, pool_size², num_classes, 4]
+            tiled_features = tf.transpose(tf.tile(features, [1, 1, 1, 1, num_classes]), [0, 1, 2, 4, 3])
+            # shuffle same way as bool_masks and transpose to [batch, num_rois, num_classes, pool_size², 4]
+            tiled_features = tf.transpose(tf.gather_nd(tiled_features, shuffle_idx), [0, 1, 3, 2, 4])
         # multiply bool_mask with zero_depth_mask, to get only elements that have nonzero depth
         # in the resulting mask
         bool_mask = tf.multiply(zero_depth_mask, bool_mask)
@@ -367,18 +372,24 @@ class SamplePointsFromMaskedRegion(KL.Layer):
                                 tf.gather_nd(tiled_xyz, idx))
         # [batch, num_rois, num_classes, num_points, 3, 1]
         tiled_xyz = tf.expand_dims(tiled_xyz, axis=-1)
-
-        tiled_features = tf.multiply(tf.expand_dims(bool_values, axis=-1),
-                                     tf.gather_nd(tiled_features, idx))
-        # [batch, num_rois, num_classes, num_points, 4, 1]
-        tiled_features = tf.expand_dims(tiled_features, axis=-1)
-        return tf.concat([tiled_xyz, tiled_features], axis=-2)
+        if self.sep_feat:
+            tiled_features = tf.multiply(tf.expand_dims(bool_values, axis=-1),
+                                         tf.gather_nd(tiled_features, idx))
+            # [batch, num_rois, num_classes, num_points, 4, 1]
+            tiled_features = tf.expand_dims(tiled_features, axis=-1)
+            ret = tf.concat([tiled_xyz, tiled_features], axis=-2)
+        else:
+            ret = tiled_xyz
+        return ret
 
     def compute_output_shape(self, input_shape):
         batch = input_shape[0][0]
         num_rois = input_shape[0][1]
-        num_classes = input_shape[2][-1]
-        num_features = input_shape[1][-2] + 3
+        num_classes = input_shape[-1][-1]
+        if self.sep_feat:
+            num_features = input_shape[1][-2] + 3
+        else:
+            num_features = input_shape[0][-2]
         return (batch, num_rois, num_classes, self.num_points, num_features, 1)
 
 
@@ -421,17 +432,61 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         feature_list = KL.TimeDistributed(KL.BatchNormalization(),
                                           name='mrcnn_pose_feature_bn')(feature_list, training=train_bn)
         feature_list = KL.Activation('softplus')(feature_list)
+        # [batch, num_rois, 1, num_points 7, 1]
+        concat_point_cloud = KL.Lambda(lambda y: tf.expand_dims(tf.concat([y[0], y[1]], axis=-2), axis=2),
+                                       name="point_cloud_repr_concat_0")([pcl_list, feature_list])
+        # [batch, num_rois, num_classes=1, 7 * 7]
+        shared = build_PointNet_Keras_Graph(concat_point_cloud, pool_size * pool_size, config, train_bn, "input_transform", 7,
+                                            7 * 7,
+                                            last_activation="linear", vector_size=config.POINTNET_VECTOR_SIZE, num_classes=1)
+        # [batch, num_rois, num_classes=1, 7, 7]
+        shared = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, 1, 7, 7))(shared)
+        # reshape to [batch, num_rois, num_classes, num_points, 7]
+        concat_point_cloud = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, 1, pool_size * pool_size, 7))(
+            concat_point_cloud)
+        # [batch, num_rois, num_classes=1, num_points, 7] x [batch, num_rois, num_classes, 7, 7] =
+        # [batch, num_rois, num_classes=1, num_points, 7]
+        shared = KL.Lambda(lambda y: tf.matmul(y[0], y[1]))([concat_point_cloud, shared])
+        # reshape to [batch, num_rois, num_classes=1, num_points, 7, 1]
+        shared = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, 1, pool_size * pool_size, 7, 1))(shared)
+        shared = KL.Lambda(lambda y: tf.reshape(tf.transpose(y, [0, 2, 3, 1, 4, 5]),
+                                                             (config.BATCH_SIZE * 1, pool_size * pool_size,
+                                                              config.TRAIN_ROIS_PER_IMAGE * 7, 1)))(shared)
+        # transform to [batch * num_classes=1, num_points, num_rois, 64]
+        shared = KL.Conv2D(32, (1, 7), strides=(1, 7), padding="valid",
+                      name=f"mrcnn_pointnet_feature_conv1")(shared)
+        shared = KL.BatchNormalization(
+            name=f'mrcnn_pointnet_feature_bn1')(shared, training=train_bn)
+        shared = KL.Activation('relu')(shared)
+        # [batch * num_classes, num_points, num_rois, 64]
+        shared = KL.Conv2D(32, (1, 1), padding="valid",
+                           name=f"mrcnn_pointnet_feature_conv2")(shared)
+        shared = KL.BatchNormalization(
+            name=f'mrcnn_pointnet_feature_bn2')(shared, training=train_bn)
+        shared = KL.Activation('relu')(shared)
+        shared = KL.Lambda(lambda y: tf.transpose(tf.reshape(y, [config.BATCH_SIZE,
+                                                                 1, #= num_classes
+                                                                 pool_size * pool_size,
+                                                                 config.TRAIN_ROIS_PER_IMAGE,
+                                                                 32, 1]), [0, 3, 1, 2, 4, 5]))(shared)
+        shared_feature_transform = build_PointNet_Keras_Graph(shared, pool_size * pool_size, config, train_bn, "feature_transform",
+                                                              32, 32*32, 1, "relu", config.POINTNET_VECTOR_SIZE,
+                                                              )
+        shared_feature_transform = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, 1, 32, 32))(shared_feature_transform)
+        shared = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, 1, pool_size * pool_size, 32))(shared)
+        # [batch, num_rois, num_classes =1, num_points, 32]
+        shared = KL.Lambda(lambda y: tf.matmul(y[0], y[1]))([shared, shared_feature_transform])
+        # [batch, num_rois, pool_size * pool_size, 32, 1]
+        shared = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, pool_size * pool_size, 32, 1))(shared)
     elif config.POSE_ESTIMATION_METHOD is "pointnet2":
         concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
                                                           name="point_cloud_repr_concat_0")([pcl_list, feature_list])
-        concat_point_cloud = build_PointNet2_Feature_Graph(concat_point_cloud,
+        shared = build_PointNet2_Feature_Graph(concat_point_cloud,
                                                            train_bn, 0.5, pool_size * pool_size, config.TOP_DOWN_PYRAMID_SIZE,
                                                            config)
-        pcl_list = KL.Lambda(lambda y: y[:, :, :, :3])(concat_point_cloud)
-        feature_list = KL.Lambda(lambda y: y[:, :, :, 3:])(concat_point_cloud)
     # merge to [batch, num_rois, num_classes, num_points, 7, 1]
-    concat_point_cloud = SamplePointsFromMaskedRegion(num_points,
-                                                      name="point_cloud_repr_concat")([pcl_list, feature_list, masks])
+    concat_point_cloud = SamplePointsFromMaskedRegion(num_points, seperate_features=False,
+                                                      name="point_cloud_repr_concat")([shared, masks])
     # concat_point_cloud = KL.Lambda(lambda y: tf.concat([y[0], y[1]], axis=-2),
     #                              name="point_cloud_repr_concat")([pcl_list, feature_list])
     if config.POSE_ESTIMATION_METHOD is "pointnet2":
@@ -452,10 +507,11 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
                                          last_activation="linear",
                                          vector_size=config.POINTNET_VECTOR_SIZE)
     else:
+
         # [batch, num_rois, num_classes, 3]
         trans = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
-                                           train_bn, "trans", 7, 3,
-                                           vector_size=config.POINTNET_VECTOR_SIZE)
+                                           train_bn, "trans", 32, 3,
+                                           vector_size=config.POINTNET_VECTOR_SIZE, num_classes=config.NUM_CLASSES)
         # transform to [batch, num_rois, num_classes, 1, 3, 1]
         trans = KL.Reshape((config.TRAIN_ROIS_PER_IMAGE, config.NUM_CLASSES,
                             1, 3, 1), name="trans_preshape")(trans)
@@ -474,9 +530,10 @@ def build_fpn_pointnet_pose_graph(rois, feature_maps, depth_image, image_meta, m
         #                                name="centered_concat_point_clouds")([pcl_list, feature_list])
         # [batch, num_rois, num_classes, 6]
         rot = build_PointNet_Keras_Graph(concat_point_cloud, num_points, config,
-                                         train_bn, "rot", 7, 6,
+                                         train_bn, "rot", 32, 6,
                                          last_activation="linear",
-                                         vector_size=int(1.0*config.POINTNET_VECTOR_SIZE))
+                                         vector_size=int(1.0*config.POINTNET_VECTOR_SIZE),
+                                         num_classes=config.NUM_CLASSES)
 
     # [batch, num_rois, 3, 1, num_classes]
     trans = KL.Lambda(lambda y: tf.transpose(tf.squeeze(y, axis=3), [0, 1, 3, 4, 2]), name="trans_reshape")(trans)

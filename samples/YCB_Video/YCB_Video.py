@@ -318,7 +318,7 @@ class YCBVConfig(Config):
 
     LEARNING_RATE = 0.003
     GRADIENT_CLIP_NORM = 5.0
-    ESTIMATE_6D_POSE = False
+    ESTIMATE_6D_POSE = True
     POSE_ESTIMATION_METHOD = "pointnet"
     POINTNET_VECTOR_SIZE = 256
     # MASK_POOL_SIZE = 10
@@ -875,7 +875,7 @@ if __name__ == '__main__':
         #                            ).with_node_names(show_name_regexes=['.*']).order_by('bytes').with_file_output("./output.txt").with_timeline_output("./timeline.json").build()
         # prof = tf.profiler.Profiler(graph=KB.get_session().graph)
         num += 20
-        layers = "heads"
+        layers = "pointnet_pose"
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
                     epochs=num,
